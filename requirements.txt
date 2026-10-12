@@ -1,0 +1,9 @@
+# Core app
+streamlit>=1.32
+huggingface_hub>=0.26
+pillow>=10.0
+
+# NOTE: no `torch` / `diffusers` needed!
+# Video generation happens on Hugging Face's inference providers (their GPUs),
+# called through the `huggingface_hub` SDK. Keeping torch OUT makes the Space
+# build in ~1-2 minutes instead of 15+, and the free CPU tier is plenty.
