@@ -648,11 +648,11 @@ with tab1:
     num_clips = 4
     story_lines = ""
     if story_mode:
-        # 30-second quick preset — 6 clips x 5s (8s clips exceed ZeroGPU limits)
-        if st.button("🎯 30-Second Ad Preset (6 clips × 5s)",
-                     help="Ek click mein 30 second ki ad video ki setting"):
-            st.session_state["_num_clips_slider"] = 6
-            st.session_state["_duration_slider"] = 5
+        # 30-second quick preset — 4 clips x 8s = 32s total
+        if st.button("🎯 30-Second Ad Preset (4 clips × 8s)",
+                     help="Ek click mein 30+ second ki ad video ki setting"):
+            st.session_state["_num_clips_slider"] = 4
+            st.session_state["_duration_slider"] = 8
             st.rerun()
         num_clips = st.slider("Kitne clips?", min_value=2, max_value=6,
                               value=4, key="_num_clips_slider",
