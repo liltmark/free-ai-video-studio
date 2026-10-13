@@ -4,9 +4,11 @@ gradio_client>=2.0
 pillow>=10.0
 imageio>=2.30
 imageio-ffmpeg>=0.5
+edge-tts>=6.0
 
 # NOTE: no `torch` / `diffusers` / `huggingface_hub` needed!
 # Video generation happens on PUBLIC Hugging Face Gradio Spaces (their GPUs),
 # called through `gradio_client`. No API keys, no tokens, no credits.
 # imageio(-ffmpeg) is only for story mode: last-frame extraction + clip stitching.
+# edge-tts is for the free AI voiceover (Microsoft's free TTS, no key needed).
 # Keeping torch OUT makes the build fast, and the free CPU tier is plenty.
