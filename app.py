@@ -44,10 +44,7 @@ SURVEY_LINKS = [
     # {"title": "Sample Survey", "url": "https://example.com", "desc": "Mukhtasar wazahat"},
 ]
 
-# Pollinations.ai free video API key — https://enter.pollinations.ai/keys se free mein lein.
-# Ye HF Spaces se ALAG quota hai, to roz zyada videos banengi.
-# Key yahan hardcode kar sakte hain ya sidebar mein user khud daal sakta hai.
-POLLINATIONS_API_KEY = ""
+
 
 
 # ----------------------------------------------------------------------------
@@ -143,47 +140,6 @@ I2V_CHAIN = [SPACE_WAN, SPACE_COG5]
 # (verified working); CogVideoX-5B is fallback.
 STORY_CHAIN = [SPACE_WAN, SPACE_COG5]
 
-
-# ----------------------------------------------------------------------------
-# Pollinations.ai — free video API (ALAG quota, HF se independent)
-# ----------------------------------------------------------------------------
-# Docs: https://gen.pollinations.ai/video/{prompt}?key=KEY&duration=3
-# Free key: https://enter.pollinations.ai/keys
-
-def _pollinations_generate(prompt: str, duration: float, width: int, height: int,
-                           api_key: str, status) -> bytes:
-    """Generate video via Pollinations.ai free API. Returns MP4 bytes."""
-    import urllib.parse
-    if not api_key:
-        raise RuntimeError("Pollinations API key nahi hai")
-    # aspect ratio
-    if height > width:
-        ar = "9:16"
-    elif width > height:
-        ar = "16:9"
-    else:
-        ar = "1:1"
-    dur = max(1, min(10, int(round(duration))))
-    q = urllib.parse.quote(prompt[:500])
-    url = (f"https://gen.pollinations.ai/video/{q}"
-           f"?key={urllib.parse.quote(api_key)}"
-           f"&duration={dur}&aspectRatio={ar}")
-    status.update(label="🎥 Pollinations.ai — video ban rahi hai…", state="running")
-    req = urllib.request.Request(url, headers={"User-Agent": "FreeAIVideoStudio/1.0"})
-    with urllib.request.urlopen(req, timeout=600) as resp:
-        data = resp.read()
-    # sanity: must look like an MP4 (ftyp box) not a JSON error
-    if len(data) < 10000 or (data[:200].strip().startswith(b"{")):
-        raise RuntimeError(f"Pollinations ne video nahi di: {data[:200]!r}")
-    status.update(label="✅ Video ready — via Pollinations.ai", state="complete")
-    return data
-
-
-def _pollinations_key() -> str:
-    """API key: owner setting first, then user-entered sidebar key."""
-    sidebar_key = st.session_state.get("pollinations_key", "").strip()
-    return sidebar_key or POLLINATIONS_API_KEY.strip()
-
 _client_cache: dict = {}
 
 
@@ -262,9 +218,6 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
             chain = [preferred] + [s for s in chain if s != preferred]
 
     last_exc: Exception | None = None
-    # Pollinations (alag free quota) — HF chain ke baad try hoga, ya preferred ho to pehle
-    polli_key = _pollinations_key()
-    polli_in_chain = bool(polli_key) and kind == "t2v"  # Pollinations T2V only
     for space_id in chain:
         label = SPACE_ADAPTERS[space_id]["label"]
         submit_fn = SPACE_ADAPTERS[space_id]["fn"]
@@ -322,18 +275,6 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                     continue
                 status.write(f"⚠️ {label} fail — agla Space try kar raha hun…")
                 break  # → next Space
-
-    # HF chain fail → Pollinations try karo (alag quota!)
-    if polli_in_chain and last_exc is not None:
-        try:
-            video_bytes = _pollinations_generate(
-                params.get("prompt", ""), params.get("duration", 3),
-                params.get("width", 720), params.get("height", 1280),
-                polli_key, status)
-            return video_bytes, "Pollinations.ai (free API)", "pollinations"
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc
-            status.write("⚠️ Pollinations bhi fail — sab options khatam.")
 
     status.update(label="❌ Sab Spaces fail/busy", state="error")
     assert last_exc is not None
@@ -608,17 +549,6 @@ with st.sidebar:
             "lag sakte hain. App khud agla Space try karti hai.\n"
             "• **Space hosting:** free (Streamlit Community Cloud)."
         )
-
-    st.divider()
-    st.subheader("🔑 Pollinations.ai (extra free videos)")
-    st.caption("Free key: [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys)")
-    st.text_input(
-        "Pollinations API Key",
-        type="password",
-        key="pollinations_key",
-        placeholder="Paste your free key here",
-        help="Ye HF se ALAG quota hai — key lagane par roz zyada videos banengi.",
-    )
 
 
 # ----------------------------------------------------------------------------
