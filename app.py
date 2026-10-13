@@ -539,6 +539,12 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🎛️ Generation settings")
+    # 30-second preset — MUST be before the sliders (can't set widget state after render)
+    if st.button("🎯 30-Second Ad Preset (10 clips × 3s)",
+                 help="Ek click mein 30 second ki ad video ki setting"):
+        st.session_state["_num_clips_slider"] = 10
+        st.session_state["_duration_slider"] = 3
+        st.rerun()
     res_label = st.selectbox("Resolution", list(RESOLUTIONS.keys()), index=0)
     width, height = RESOLUTIONS[res_label]
     duration = st.slider(
@@ -648,15 +654,9 @@ with tab1:
     num_clips = 4
     story_lines = ""
     if story_mode:
-        # 30-second quick preset — 4 clips x 8s = 32s total
-        if st.button("🎯 30-Second Ad Preset (4 clips × 8s)",
-                     help="Ek click mein 30+ second ki ad video ki setting"):
-            st.session_state["_num_clips_slider"] = 4
-            st.session_state["_duration_slider"] = 8
-            st.rerun()
-        num_clips = st.slider("Kitne clips?", min_value=2, max_value=6,
+        num_clips = st.slider("Kitne clips?", min_value=2, max_value=10,
                               value=4, key="_num_clips_slider",
-                              help="Har clip max ~8 sec. 4 clips ≈ 32 sec.")
+                              help="Zyada clips = lambi video. 10 clips × 3s = 30 sec.")
         st.caption(f"📏 Total: ~{num_clips * duration} seconds "
                    f"({num_clips} clips × {duration}s)")
         story_lines = st.text_area(
