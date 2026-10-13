@@ -583,7 +583,7 @@ if not st.session_state.ad_watched:
             st.rerun()
     st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["🎬 Text to Video", "🖼️ Image to Video", "📋 Surveys", "🎞️ Pexels Stock"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎬 Text to Video", "🖼️ Image to Video", "📋 Surveys", "🎞️ Pexels Stock", "📓 Colab GPU"])
 
 
 def show_result(key_prefix: str, label: str) -> None:
@@ -975,3 +975,38 @@ st.caption(
     "Built with Streamlit + `gradio_client`. Videos via public Hugging Face "
     "Spaces: LTX-Video, CogVideoX — no API keys needed."
 )
+
+
+# ---------------- Tab 5: Colab GPU ----------------
+with tab5:
+    st.subheader("📓 Colab GPU — Free Video Generation")
+    st.caption("Apna free T4 GPU — **koi quota nahi!** Slow hai (15-30 min/clip) lekin unlimited.")
+    st.markdown("""
+**Kaise use karein:**
+1. [Google Colab](https://colab.research.google.com) kholein
+2. **Runtime → Change runtime type → T4 GPU** select karein
+3. Neeche wala code **copy** karke Colab ke cell mein **paste** karein
+4. Apna **prompt** likhein aur cell **chalayein** (▶ button)
+5. Video ban jayegi to **download** kar lein
+""")
+    colab_code = '''# 🎬 Free Video Generator (Wan 2.1 on Colab T4)
+# Cell 1: Install
+!pip install -q diffusers transformers accelerate
+
+# Cell 2: Generate
+import torch
+from diffusers import WanPipeline
+
+prompt = "Pixar-style 3D cartoon plumber with cat face, blue uniform, fixing a sink"  # <-- apna prompt yahan likhein
+
+pipe = WanPipeline.from_pretrained("Wan-AI/Wan2.1-T2V-1.3B-Diffusers", torch_dtype=torch.float16)
+pipe.to("cuda")
+video = pipe(prompt=prompt, num_frames=81, height=480, width=832).frames[0]
+
+# Save
+from diffusers.utils import export_to_video
+export_to_video(video, "output.mp4")
+print("✅ Video ready: output.mp4")
+'''
+    st.code(colab_code, language="python")
+    st.caption("💡 Tip: Colab background mein chalega — aap tool mein aur kaam kar sakte hain!")
