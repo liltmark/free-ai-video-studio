@@ -44,6 +44,11 @@ SURVEY_LINKS = [
     # {"title": "Sample Survey", "url": "https://example.com", "desc": "Mukhtasar wazahat"},
 ]
 
+# Pollinations.ai free video API key — https://enter.pollinations.ai/keys se free mein lein.
+# Ye HF Spaces se ALAG quota hai, to roz zyada videos banengi.
+# Key yahan hardcode kar sakte hain ya sidebar mein user khud daal sakta hai.
+POLLINATIONS_API_KEY = ""
+
 
 # ----------------------------------------------------------------------------
 # Public Gradio Spaces (verified live via gradio_client)
@@ -88,35 +93,16 @@ def _ltx_submit(client: Client, kind: str, prompt: str, negative: str,
 def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
                 image_path, width: int, height: int, duration: float,
                 seed: int, guidance: float):
-    """Submit to CogVideoX-5B Space (/generate handles both t2v and i2v)."""
+    """Submit to CogVideoX Space (/generate handles both t2v and i2v)."""
     seed_val = random.randint(0, 2 ** 31 - 1) if seed == -1 else seed
-    kwargs = dict(
+    return client.submit(
         prompt=prompt,
+        image_input=image_path,               # None → text-to-video
         video_input=None,
         video_strength=0.5,
         seed_value=seed_val,
         scale_status=False,
         rife_status=False,
-        api_name="/generate",
-    )
-    # image_input only if we have an image (Cog5B supports it; None ok for T2V)
-    if image_path:
-        kwargs["image_input"] = image_path
-    else:
-        kwargs["image_input"] = None
-    return client.submit(**kwargs)
-
-
-def _cog2_submit(client: Client, kind: str, prompt: str, negative: str,
-                 image_path, width: int, height: int, duration: float,
-                 seed: int, guidance: float):
-    """Submit to CogVideoX-2B Space — T2V ONLY, no image_input param exists."""
-    if kind != "t2v":
-        raise ValueError("CogVideoX-2B sirf text-to-video karta hai")
-    return client.submit(
-        prompt=prompt,
-        num_inference_steps=50,
-        guidance_scale=float(guidance),
         api_name="/generate",
     )
 
@@ -144,7 +130,7 @@ def _wan_submit(client: Client, kind: str, prompt: str, negative: str,
 SPACE_ADAPTERS = {
     SPACE_LTX:  {"label": "LTX-Video (fast)", "fn": _ltx_submit},
     SPACE_COG5: {"label": "CogVideoX-5B",     "fn": _cog_submit},
-    SPACE_COG2: {"label": "CogVideoX-2B",     "fn": _cog2_submit},
+    SPACE_COG2: {"label": "CogVideoX-2B",     "fn": _cog_submit},
     SPACE_WAN:  {"label": "Wan 2.2 14B (I2V)", "fn": _wan_submit},
 }
 
@@ -156,6 +142,47 @@ I2V_CHAIN = [SPACE_WAN, SPACE_COG5]
 # Story mode chains clips via image-to-video. Wan 2.2 14B is primary
 # (verified working); CogVideoX-5B is fallback.
 STORY_CHAIN = [SPACE_WAN, SPACE_COG5]
+
+
+# ----------------------------------------------------------------------------
+# Pollinations.ai — free video API (ALAG quota, HF se independent)
+# ----------------------------------------------------------------------------
+# Docs: https://gen.pollinations.ai/video/{prompt}?key=KEY&duration=3
+# Free key: https://enter.pollinations.ai/keys
+
+def _pollinations_generate(prompt: str, duration: float, width: int, height: int,
+                           api_key: str, status) -> bytes:
+    """Generate video via Pollinations.ai free API. Returns MP4 bytes."""
+    import urllib.parse
+    if not api_key:
+        raise RuntimeError("Pollinations API key nahi hai")
+    # aspect ratio
+    if height > width:
+        ar = "9:16"
+    elif width > height:
+        ar = "16:9"
+    else:
+        ar = "1:1"
+    dur = max(1, min(10, int(round(duration))))
+    q = urllib.parse.quote(prompt[:500])
+    url = (f"https://gen.pollinations.ai/video/{q}"
+           f"?key={urllib.parse.quote(api_key)}"
+           f"&duration={dur}&aspectRatio={ar}")
+    status.update(label="🎥 Pollinations.ai — video ban rahi hai…", state="running")
+    req = urllib.request.Request(url, headers={"User-Agent": "FreeAIVideoStudio/1.0"})
+    with urllib.request.urlopen(req, timeout=600) as resp:
+        data = resp.read()
+    # sanity: must look like an MP4 (ftyp box) not a JSON error
+    if len(data) < 10000 or (data[:200].strip().startswith(b"{")):
+        raise RuntimeError(f"Pollinations ne video nahi di: {data[:200]!r}")
+    status.update(label="✅ Video ready — via Pollinations.ai", state="complete")
+    return data
+
+
+def _pollinations_key() -> str:
+    """API key: owner setting first, then user-entered sidebar key."""
+    sidebar_key = st.session_state.get("pollinations_key", "").strip()
+    return sidebar_key or POLLINATIONS_API_KEY.strip()
 
 _client_cache: dict = {}
 
@@ -235,6 +262,9 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
             chain = [preferred] + [s for s in chain if s != preferred]
 
     last_exc: Exception | None = None
+    # Pollinations (alag free quota) — HF chain ke baad try hoga, ya preferred ho to pehle
+    polli_key = _pollinations_key()
+    polli_in_chain = bool(polli_key) and kind == "t2v"  # Pollinations T2V only
     for space_id in chain:
         label = SPACE_ADAPTERS[space_id]["label"]
         submit_fn = SPACE_ADAPTERS[space_id]["fn"]
@@ -293,6 +323,18 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                 status.write(f"⚠️ {label} fail — agla Space try kar raha hun…")
                 break  # → next Space
 
+    # HF chain fail → Pollinations try karo (alag quota!)
+    if polli_in_chain and last_exc is not None:
+        try:
+            video_bytes = _pollinations_generate(
+                params.get("prompt", ""), params.get("duration", 3),
+                params.get("width", 720), params.get("height", 1280),
+                polli_key, status)
+            return video_bytes, "Pollinations.ai (free API)", "pollinations"
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            status.write("⚠️ Pollinations bhi fail — sab options khatam.")
+
     status.update(label="❌ Sab Spaces fail/busy", state="error")
     assert last_exc is not None
     raise last_exc
@@ -342,30 +384,12 @@ def stitch_clips(clips: list) -> bytes:
 
 # Voiceover voices (edge-tts, free, no key). Key = label shown in UI.
 VOICES = {
-    # US English
     "🇺🇸 Guy (US Male)": "en-US-GuyNeural",
     "🇺🇸 Jenny (US Female)": "en-US-JennyNeural",
     "🇺🇸 Aria (US Female)": "en-US-AriaNeural",
-    "🇺🇸 Davis (US Male)": "en-US-DavisNeural",
-    "🇺🇸 Jane (US Female)": "en-US-JaneNeural",
-    "🇺🇸 Tony (US Male)": "en-US-TonyNeural",
-    "🇺🇸 Sara (US Female)": "en-US-SaraNeural",
-    # UK English
     "🇬🇧 Ryan (UK Male)": "en-GB-RyanNeural",
-    "🇬🇧 Sonia (UK Female)": "en-GB-SoniaNeural",
-    "🇬🇧 Thomas (UK Male)": "en-GB-ThomasNeural",
-    # Australian English
-    "🇦🇺 Natasha (AU Female)": "en-AU-NatashaNeural",
-    "🇦🇺 William (AU Male)": "en-AU-WilliamNeural",
-    # Indian English
-    "🇮🇳 Neerja (IN Female)": "en-IN-NeerjaNeural",
-    "🇮🇳 Prabhat (IN Male)": "en-IN-PrabhatNeural",
-    # Urdu (Pakistan)
     "🇵🇰 Asad (Urdu Male)": "ur-PK-AsadNeural",
     "🇵🇰 Uzma (Urdu Female)": "ur-PK-UzmaNeural",
-    # Hindi (India) — useful for South Asian audience
-    "🇮🇳 Swara (Hindi Female)": "hi-IN-SwaraNeural",
-    "🇮🇳 Madhur (Hindi Male)": "hi-IN-MadhurNeural",
 }
 
 
@@ -444,52 +468,6 @@ def mux_voiceover(video_bytes: bytes, audio_bytes: bytes) -> bytes:
         check=True, capture_output=True, timeout=300)
     with open(out, "rb") as f:
         return f.read()
-
-
-# ---------------- Lip-Sync (free public Spaces) ----------------
-SPACE_LATENTSYNC = "fffiloni/LatentSync"  # best quality, ZeroGPU
-SPACE_WAV2LIP_CPU = "manavisrani07/gradio-lipsync-wav2lip"  # CPU, no quota, slow
-
-def lip_sync_video(video_bytes: bytes, audio_bytes: bytes, status=None) -> bytes:
-    """Lip-sync video to audio via public Spaces.
-    Tries LatentSync (GPU, fast) → falls back to Wav2Lip CPU (slow, no quota).
-    Returns lip-synced MP4 bytes."""
-    from gradio_client.utils import handle_file
-    import os
-    tmpdir = tempfile.mkdtemp()
-    vp = os.path.join(tmpdir, "v.mp4")
-    ap = os.path.join(tmpdir, "a.mp3")
-    with open(vp, "wb") as f:
-        f.write(video_bytes)
-    with open(ap, "wb") as f:
-        f.write(audio_bytes)
-    # Primary: LatentSync (best quality)
-    try:
-        if status:
-            status.write("🎤 LatentSync se lip-sync kar raha hun…")
-        client = Client(SPACE_LATENTSYNC)
-        result = client.predict(
-            input_video_path=handle_file(vp),
-            input_audio_path=handle_file(ap),
-            api_name="/generate_lip_sync_video",
-        )
-        out_path = result[0] if isinstance(result, (list, tuple)) else result
-        with open(out_path, "rb") as f:
-            return f.read()
-    except Exception as e:
-        err = str(e)
-        if status:
-            status.write(f"⚠️ LatentSync fail ({err[:100]}) — CPU fallback try kar raha hun…")
-        # Fallback: Wav2Lip on CPU (slow but no quota)
-        client = Client(SPACE_WAV2LIP_CPU)
-        result = client.predict(
-            handle_file(vp), handle_file(ap),
-            "wav2lip_gan", 0, 10, 0, 0, 1,
-            api_name="/generate",
-        )
-        out_path = result[0] if isinstance(result, (list, tuple)) else result
-        with open(out_path, "rb") as f:
-            return f.read()
 
 
 def generate_story(status, preferred: str | None, clip_prompts: list,
@@ -603,17 +581,11 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🎛️ Generation settings")
-    # 30-second preset — MUST be before the sliders (can't set widget state after render)
-    if st.button("🎯 30-Second Ad Preset (10 clips × 3s)",
-                 help="Ek click mein 30 second ki ad video ki setting"):
-        st.session_state["_num_clips_slider"] = 10
-        st.session_state["_duration_slider"] = 3
-        st.rerun()
     res_label = st.selectbox("Resolution", list(RESOLUTIONS.keys()), index=0)
     width, height = RESOLUTIONS[res_label]
     duration = st.slider(
         "Duration (seconds)",
-        min_value=1, max_value=8, value=3, step=1, key="_duration_slider",
+        min_value=1, max_value=8, value=3, step=1,
         help="Lambi video = zyada queue/wait time.",
     )
     guidance = st.slider(
@@ -636,6 +608,17 @@ with st.sidebar:
             "lag sakte hain. App khud agla Space try karti hai.\n"
             "• **Space hosting:** free (Streamlit Community Cloud)."
         )
+
+    st.divider()
+    st.subheader("🔑 Pollinations.ai (extra free videos)")
+    st.caption("Free key: [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys)")
+    st.text_input(
+        "Pollinations API Key",
+        type="password",
+        key="pollinations_key",
+        placeholder="Paste your free key here",
+        help="Ye HF se ALAG quota hai — key lagane par roz zyada videos banengi.",
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -670,7 +653,7 @@ if not st.session_state.ad_watched:
             st.rerun()
     st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["🎬 Text to Video", "🖼️ Image to Video", "🎞️ Stitch + Voiceover", "📋 Surveys"])
+tab1, tab2, tab3 = st.tabs(["🎬 Text to Video", "🖼️ Image to Video", "📋 Surveys"])
 
 
 def show_result(key_prefix: str, label: str) -> None:
@@ -698,24 +681,9 @@ def show_result(key_prefix: str, label: str) -> None:
 with tab1:
     st.subheader("Describe it → get an MP4")
     st.caption("⚡ Auto-fallback ON: ek Space busy ho to app khud agla try karegi. Koi key nahi chahiye.")
-    # Viral prompt presets
-    with st.expander("🔥 Viral Prompt Presets — ek click mein ready prompt"):
-        VIRAL_PRESETS = {
-            "🐍 Giant Snake (viral wildlife)": "A gigantic anaconda emerging from a misty jungle river at dawn, water splashing dramatically, cinematic wildlife documentary style, hyper-realistic, 8k detail",
-            "🦁 Giant Lion": "A colossal lion walking through savanna grass at golden hour, dust particles in air, epic cinematic scale, photorealistic wildlife film",
-            "🌊 Ocean Monster": "A massive sea creature surfacing from deep ocean waves during a storm, dramatic lightning, cinematic disaster movie style",
-            "🔧 Funny Plumber": "A cheerful Pixar-style 3D cartoon plumber in blue overalls slips on a banana peel in a flooded bathroom, comedic timing, vibrant colors",
-            "🏠 Garage Comedy": "A funny 3D cartoon garage door repairman gets chased by a runaway garage door spring, slapstick comedy, bright workshop",
-            "🌋 Volcano Eruption": "A dramatic volcano erupting at night, lava fountains and ash clouds, cinematic nature documentary, hyper-detailed",
-        }
-        cols = st.columns(2)
-        for i, (label, ptext) in enumerate(VIRAL_PRESETS.items()):
-            if cols[i % 2].button(label, key=f"viral_{i}", use_container_width=True):
-                st.session_state["_prompt_box"] = ptext
-                st.rerun()
     prompt = st.text_area(
         "Prompt",
-        height=120, key="_prompt_box",
+        height=120,
         placeholder="A cheerful plumber waves hello at the camera, bright workshop, "
                     "expressive face, medium close-up",
     )
@@ -733,9 +701,8 @@ with tab1:
     num_clips = 4
     story_lines = ""
     if story_mode:
-        num_clips = st.slider("Kitne clips?", min_value=2, max_value=10,
-                              value=4, key="_num_clips_slider",
-                              help="Zyada clips = lambi video. 10 clips × 3s = 30 sec.")
+        num_clips = st.slider("Kitne clips?", min_value=2, max_value=6, value=4,
+                              help="Har clip max ~8 sec. 4 clips ≈ 32 sec.")
         st.caption(f"📏 Total: ~{num_clips * duration} seconds "
                    f"({num_clips} clips × {duration}s)")
         story_lines = st.text_area(
@@ -907,81 +874,6 @@ with tab2:
 
 # ---------------- Tab 3: Surveys ----------------
 with tab3:
-    st.subheader("🎞️ Stitch + Voiceover")
-    st.write(
-        "Kahin se bhi bani videos (Google Flow, Kling, CapCut…) yahan upload karen — "
-        "app unhe jor kar Urdu/English voiceover laga dega. **Koi GPU quota nahi lagta!**"
-    )
-    uploaded = st.file_uploader(
-        "Video clips upload karen (MP4, tartib mein)",
-        type=["mp4"], accept_multiple_files=True, key="stitch_upload",
-    )
-    if uploaded:
-        st.caption(f"📎 {len(uploaded)} clips: " + ", ".join(u.name for u in uploaded))
-    stitch_script = st.text_area(
-        "Voiceover script",
-        height=100, key="stitch_script",
-        placeholder="Is your drain clogged? Call EasyFix Plumbing now — same day service!",
-    )
-    stitch_voice = st.selectbox("Voice", list(VOICES.keys()), index=0, key="stitch_voice")
-    stitch_lipsync = st.checkbox(
-        "🎤 Lip-sync (honth awaz se milao)",
-        value=False, key="stitch_lipsync",
-        help="Video ke character ke honth voiceover se milenge. Thora time lagta hai.",
-    )
-    if st.button("🎬 Stitch + Voiceover", type="primary", use_container_width=True, key="stitch_go"):
-        if not uploaded or len(uploaded) < 1:
-            st.error("✏️ Pehle kam az kam 1 video clip upload karen.")
-        else:
-            status = st.status("🎞️ Clips jor raha hun…", expanded=True)
-            try:
-                clips = [u.read() for u in uploaded]
-                if len(clips) > 1:
-                    status.write(f"🔗 {len(clips)} clips stitch ho rahe hain…")
-                    video_bytes = stitch_clips(clips)
-                else:
-                    video_bytes = clips[0]
-                label_done = f"{len(clips)} clips stitched" if len(clips) > 1 else "Video"
-                fname = f"stitched_{int(time.time())}.mp4"
-                script = stitch_script.strip()
-                audio_bytes = None
-                if script:
-                    try:
-                        status.update(label="🎙️ Voiceover bana raha hun…", state="running")
-                        audio_bytes = generate_voiceover(script, VOICES[stitch_voice])
-                        if stitch_lipsync:
-                            # Lip-sync needs raw video + audio (not muxed yet)
-                            status.update(label="🎤 Lip-sync kar raha hun…", state="running")
-                            try:
-                                video_bytes = lip_sync_video(video_bytes, audio_bytes, status)
-                                label_done += " + lip-sync"
-                                fname = fname.replace(".mp4", "_lipsync.mp4")
-                            except Exception as le:
-                                status.write(f"⚠️ Lip-sync fail ({str(le)[:120]}) — normal voiceover de raha hun.")
-                                status.update(label="🔊 Voice video mein jor raha hun…", state="running")
-                                video_bytes = mux_voiceover(video_bytes, audio_bytes)
-                                label_done += " + voiceover"
-                                fname = fname.replace(".mp4", "_voice.mp4")
-                        else:
-                            status.update(label="🔊 Voice video mein jor raha hun…", state="running")
-                            video_bytes = mux_voiceover(video_bytes, audio_bytes)
-                            label_done += " + voiceover"
-                            fname = fname.replace(".mp4", "_voice.mp4")
-                    except Exception as ve:
-                        status.write(f"⚠️ Voiceover fail ({ve}) — baghair voice ke de raha hun.")
-                st.session_state["stitch_video"] = video_bytes
-                st.session_state["stitch_name"] = fname
-                st.session_state["stitch_label_done"] = label_done
-                st.session_state["stitch_space_used"] = "Uploaded clips (no GPU used)"
-                st.rerun()
-            except Exception as exc:
-                st.error(f"❌ Stitch fail: {exc}")
-                with st.expander("🔧 Technical details"):
-                    st.code("".join(traceback.format_exception(exc))[-3000:])
-    show_result("stitch", "Stitched video")
-
-
-with tab4:
     st.subheader("📋 Surveys")
     st.write(
         "Neeche diye gaye surveys mukammal karen — "
