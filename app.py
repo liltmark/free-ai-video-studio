@@ -88,16 +88,35 @@ def _ltx_submit(client: Client, kind: str, prompt: str, negative: str,
 def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
                 image_path, width: int, height: int, duration: float,
                 seed: int, guidance: float):
-    """Submit to CogVideoX Space (/generate handles both t2v and i2v)."""
+    """Submit to CogVideoX-5B Space (/generate handles both t2v and i2v)."""
     seed_val = random.randint(0, 2 ** 31 - 1) if seed == -1 else seed
-    return client.submit(
+    kwargs = dict(
         prompt=prompt,
-        image_input=image_path,               # None → text-to-video
         video_input=None,
         video_strength=0.5,
         seed_value=seed_val,
         scale_status=False,
         rife_status=False,
+        api_name="/generate",
+    )
+    # image_input only if we have an image (Cog5B supports it; None ok for T2V)
+    if image_path:
+        kwargs["image_input"] = image_path
+    else:
+        kwargs["image_input"] = None
+    return client.submit(**kwargs)
+
+
+def _cog2_submit(client: Client, kind: str, prompt: str, negative: str,
+                 image_path, width: int, height: int, duration: float,
+                 seed: int, guidance: float):
+    """Submit to CogVideoX-2B Space — T2V ONLY, no image_input param exists."""
+    if kind != "t2v":
+        raise ValueError("CogVideoX-2B sirf text-to-video karta hai")
+    return client.submit(
+        prompt=prompt,
+        num_inference_steps=50,
+        guidance_scale=float(guidance),
         api_name="/generate",
     )
 
@@ -125,7 +144,7 @@ def _wan_submit(client: Client, kind: str, prompt: str, negative: str,
 SPACE_ADAPTERS = {
     SPACE_LTX:  {"label": "LTX-Video (fast)", "fn": _ltx_submit},
     SPACE_COG5: {"label": "CogVideoX-5B",     "fn": _cog_submit},
-    SPACE_COG2: {"label": "CogVideoX-2B",     "fn": _cog_submit},
+    SPACE_COG2: {"label": "CogVideoX-2B",     "fn": _cog2_submit},
     SPACE_WAN:  {"label": "Wan 2.2 14B (I2V)", "fn": _wan_submit},
 }
 
