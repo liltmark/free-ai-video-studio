@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Free AI Video Studio</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#e94560">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Video Studio">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; background:#1a1a2e; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  #splash {
+    position:fixed; inset:0; z-index:10; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:18px; background:#1a1a2e; color:#fff;
+    transition:opacity .4s;
+  }
+  #splash.hide { opacity:0; pointer-events:none; }
+  #splash img { width:96px; height:96px; border-radius:24px; box-shadow:0 8px 32px rgba(233,69,96,.4); }
+  #splash h1 { font-size:22px; font-weight:700; }
+  #splash p { color:#a0a0b8; font-size:14px; text-align:center; padding:0 32px; line-height:1.5; }
+  .spinner {
+    width:36px; height:36px; border:3px solid #33334d; border-top-color:#e94560;
+    border-radius:50%; animation:spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #installBtn {
+    display:none; background:#e94560; color:#fff; border:none; border-radius:12px;
+    padding:12px 28px; font-size:16px; font-weight:600; cursor:pointer;
+  }
+  #appframe { position:fixed; inset:0; width:100%; height:100%; border:none; }
+</style>
+</head>
+<body>
+<div id="splash">
+  <img src="icon-192.png" alt="Free AI Video Studio">
+  <h1>🎬 Free AI Video Studio</h1>
+  <p>Text-to-Video &amp; Image-to-Video<br>100% free — no API keys needed</p>
+  <div class="spinner" id="spinner"></div>
+  <button id="installBtn">📲 Install App</button>
+  <p style="font-size:12px" id="hint">Loading studio…</p>
+</div>
+<iframe id="appframe" title="Free AI Video Studio"
+  src="https://free-ai-video-studio-c4mdwne7wccbeoeagz9zaz.streamlit.app/?embed=true"
+  allow="camera; microphone; clipboard-write" loading="eager"></iframe>
+<script>
+  // Hide splash once the app iframe reports load (+ small delay for Streamlit boot)
+  var frame = document.getElementById('appframe');
+  var splash = document.getElementById('splash');
+  var hint = document.getElementById('hint');
+  var spinner = document.getElementById('spinner');
+  var loaded = false;
+  frame.addEventListener('load', function () {
+    if (loaded) return; loaded = true;
+    hint.textContent = 'Almost ready…';
+    setTimeout(function () { splash.classList.add('hide'); }, 2500);
+  });
+  // Fallback: never trap the user on splash
+  setTimeout(function () { splash.classList.add('hide'); }, 20000);
+
+  // PWA install prompt
+  var deferredPrompt = null;
+  var installBtn = document.getElementById('installBtn');
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault(); deferredPrompt = e;
+    spinner.style.display = 'none';
+    installBtn.style.display = 'block';
+    hint.textContent = 'Install par tap karein — home screen se kholein!';
+  });
+  installBtn.addEventListener('click', function () {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then(function () { deferredPrompt = null; });
+  });
+
+  // Service worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(function(){});
+  }
+</script>
+</body>
+</html>
