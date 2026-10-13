@@ -321,6 +321,94 @@ def stitch_clips(clips: list) -> bytes:
         return f.read()
 
 
+# Voiceover voices (edge-tts, free, no key). Key = label shown in UI.
+VOICES = {
+    "🇺🇸 Guy (US Male)": "en-US-GuyNeural",
+    "🇺🇸 Jenny (US Female)": "en-US-JennyNeural",
+    "🇺🇸 Aria (US Female)": "en-US-AriaNeural",
+    "🇬🇧 Ryan (UK Male)": "en-GB-RyanNeural",
+    "🇵🇰 Asad (Urdu Male)": "ur-PK-AsadNeural",
+    "🇵🇰 Uzma (Urdu Female)": "ur-PK-UzmaNeural",
+}
+
+
+async def _edge_tts_save(text: str, voice_id: str, out_path: str):
+    import edge_tts
+    comm = edge_tts.Communicate(text, voice_id)
+    await comm.save(out_path)
+
+
+def generate_voiceover(text: str, voice_id: str) -> bytes:
+    """Text → speech MP3 via edge-tts (free). Returns MP3 bytes."""
+    import asyncio
+    import os
+    tmp = tempfile.mktemp(suffix=".mp3")
+    asyncio.run(_edge_tts_save(text, voice_id, tmp))
+    with open(tmp, "rb") as f:
+        data = f.read()
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    if not data:
+        raise RuntimeError("Voiceover khali aya — text check karein")
+    return data
+
+
+def get_media_duration(path: str) -> float:
+    """Duration in seconds via ffprobe (imageio-ffmpeg)."""
+    import imageio_ffmpeg
+    import subprocess
+    import json
+    ffprobe = imageio_ffmpeg.get_ffmpeg_exe().replace("ffmpeg", "ffprobe")
+    # imageio-ffmpeg only ships ffmpeg; use ffmpeg -i stderr parse as fallback
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    proc = subprocess.run(
+        [ffmpeg, "-i", path], capture_output=True, text=True, timeout=30)
+    import re
+    m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", proc.stderr)
+    if not m:
+        return 0.0
+    h, mi, s = int(m.group(1)), int(m.group(2)), float(m.group(3))
+    return h * 3600 + mi * 60 + s
+
+
+def mux_voiceover(video_bytes: bytes, audio_bytes: bytes) -> bytes:
+    """Mux MP3 voiceover onto MP4. Audio loops/pads or trims to video length.
+    Returns final MP4 bytes."""
+    import imageio_ffmpeg
+    import subprocess
+    import os
+    tmpdir = tempfile.mkdtemp()
+    vp = os.path.join(tmpdir, "v.mp4")
+    ap = os.path.join(tmpdir, "a.mp3")
+    out = os.path.join(tmpdir, "final.mp4")
+    with open(vp, "wb") as f:
+        f.write(video_bytes)
+    with open(ap, "wb") as f:
+        f.write(audio_bytes)
+    vdur = get_media_duration(vp)
+    adur = get_media_duration(ap)
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    if adur <= 0 or vdur <= 0:
+        # durations unknown — simple mux, shortest wins
+        afilter = "anull"
+    elif adur < vdur:
+        # loop audio to fill video (+0.5s safety)
+        loops = int(vdur // adur) + 1
+        afilter = f"aloop=loop={loops}:size=2e9,atrim=0:{vdur + 0.5}"
+    else:
+        afilter = f"atrim=0:{vdur}"
+    subprocess.run(
+        [ffmpeg, "-y", "-i", vp, "-i", ap,
+         "-filter_complex", f"[1:a]{afilter}[a]",
+         "-map", "0:v", "-map", "[a]",
+         "-c:v", "copy", "-c:a", "aac", "-shortest", out],
+        check=True, capture_output=True, timeout=300)
+    with open(out, "rb") as f:
+        return f.read()
+
+
 def generate_story(status, preferred: str | None, clip_prompts: list,
                    **base_params):
     """Multi-clip story: clip 1 via text-to-video, baqi clips image-to-video
@@ -553,6 +641,20 @@ with tab1:
                         "Clip 3: plumber gives thumbs up, happy ending",
         )
 
+    st.divider()
+    st.subheader("🎙️ Voiceover (optional)")
+    st.caption("Script likhein — video mein free AI voice add ho jayegi. Khali chhorein to silent video banegi.")
+    voice_script = st.text_area(
+        "Voiceover script",
+        height=100,
+        placeholder="Is your drain clogged? Call EasyFix Plumbing now — same day service, only $110!",
+    )
+    voice_label = st.selectbox(
+        "Voice",
+        list(VOICES.keys()),
+        index=0,
+    )
+
     if st.button("🚀 Generate Video", type="primary", use_container_width=True, key="t2v_go"):
         if not prompt.strip():
             st.error("✏️ Pehle koi prompt likhein — phir Generate dabayein.")
@@ -584,6 +686,21 @@ with tab1:
                         prompt=prompt.strip(), **base)
                     fname = f"t2v_{int(time.time())}.mp4"
                     label_done = "Video"
+                # Voiceover (optional)
+                script = voice_script.strip()
+                if script:
+                    try:
+                        status.update(label="🎙️ Voiceover bana raha hun…",
+                                      state="running")
+                        voice_id = VOICES[voice_label]
+                        audio_bytes = generate_voiceover(script, voice_id)
+                        status.update(label="🔊 Voice video mein jor raha hun…",
+                                      state="running")
+                        video_bytes = mux_voiceover(video_bytes, audio_bytes)
+                        label_done += " + voiceover"
+                        fname = fname.replace(".mp4", "_voice.mp4")
+                    except Exception as ve:
+                        status.write(f"⚠️ Voiceover fail ({ve}) — silent video de raha hun.")
                 st.session_state["t2v_video"] = video_bytes
                 st.session_state["t2v_name"] = fname
                 st.session_state["t2v_space_used"] = used_label
