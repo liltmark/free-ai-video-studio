@@ -342,12 +342,30 @@ def stitch_clips(clips: list) -> bytes:
 
 # Voiceover voices (edge-tts, free, no key). Key = label shown in UI.
 VOICES = {
+    # US English
     "🇺🇸 Guy (US Male)": "en-US-GuyNeural",
     "🇺🇸 Jenny (US Female)": "en-US-JennyNeural",
     "🇺🇸 Aria (US Female)": "en-US-AriaNeural",
+    "🇺🇸 Davis (US Male)": "en-US-DavisNeural",
+    "🇺🇸 Jane (US Female)": "en-US-JaneNeural",
+    "🇺🇸 Tony (US Male)": "en-US-TonyNeural",
+    "🇺🇸 Sara (US Female)": "en-US-SaraNeural",
+    # UK English
     "🇬🇧 Ryan (UK Male)": "en-GB-RyanNeural",
+    "🇬🇧 Sonia (UK Female)": "en-GB-SoniaNeural",
+    "🇬🇧 Thomas (UK Male)": "en-GB-ThomasNeural",
+    # Australian English
+    "🇦🇺 Natasha (AU Female)": "en-AU-NatashaNeural",
+    "🇦🇺 William (AU Male)": "en-AU-WilliamNeural",
+    # Indian English
+    "🇮🇳 Neerja (IN Female)": "en-IN-NeerjaNeural",
+    "🇮🇳 Prabhat (IN Male)": "en-IN-PrabhatNeural",
+    # Urdu (Pakistan)
     "🇵🇰 Asad (Urdu Male)": "ur-PK-AsadNeural",
     "🇵🇰 Uzma (Urdu Female)": "ur-PK-UzmaNeural",
+    # Hindi (India) — useful for South Asian audience
+    "🇮🇳 Swara (Hindi Female)": "hi-IN-SwaraNeural",
+    "🇮🇳 Madhur (Hindi Male)": "hi-IN-MadhurNeural",
 }
 
 
