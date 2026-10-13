@@ -606,7 +606,7 @@ if not st.session_state.ad_watched:
             st.rerun()
     st.stop()
 
-tab1, tab2, tab3 = st.tabs(["🎬 Text to Video", "🖼️ Image to Video", "📋 Surveys"])
+tab1, tab2, tab3, tab4 = st.tabs(["🎬 Text to Video", "🖼️ Image to Video", "🎞️ Stitch + Voiceover", "📋 Surveys"])
 
 
 def show_result(key_prefix: str, label: str) -> None:
@@ -828,6 +828,61 @@ with tab2:
 
 # ---------------- Tab 3: Surveys ----------------
 with tab3:
+    st.subheader("🎞️ Stitch + Voiceover")
+    st.write(
+        "Kahin se bhi bani videos (Google Flow, Kling, CapCut…) yahan upload karen — "
+        "app unhe jor kar Urdu/English voiceover laga dega. **Koi GPU quota nahi lagta!**"
+    )
+    uploaded = st.file_uploader(
+        "Video clips upload karen (MP4, tartib mein)",
+        type=["mp4"], accept_multiple_files=True, key="stitch_upload",
+    )
+    if uploaded:
+        st.caption(f"📎 {len(uploaded)} clips: " + ", ".join(u.name for u in uploaded))
+    stitch_script = st.text_area(
+        "Voiceover script",
+        height=100, key="stitch_script",
+        placeholder="Is your drain clogged? Call EasyFix Plumbing now — same day service!",
+    )
+    stitch_voice = st.selectbox("Voice", list(VOICES.keys()), index=0, key="stitch_voice")
+    if st.button("🎬 Stitch + Voiceover", type="primary", use_container_width=True, key="stitch_go"):
+        if not uploaded or len(uploaded) < 1:
+            st.error("✏️ Pehle kam az kam 1 video clip upload karen.")
+        else:
+            status = st.status("🎞️ Clips jor raha hun…", expanded=True)
+            try:
+                clips = [u.read() for u in uploaded]
+                if len(clips) > 1:
+                    status.write(f"🔗 {len(clips)} clips stitch ho rahe hain…")
+                    video_bytes = stitch_clips(clips)
+                else:
+                    video_bytes = clips[0]
+                label_done = f"{len(clips)} clips stitched" if len(clips) > 1 else "Video"
+                fname = f"stitched_{int(time.time())}.mp4"
+                script = stitch_script.strip()
+                if script:
+                    try:
+                        status.update(label="🎙️ Voiceover bana raha hun…", state="running")
+                        audio_bytes = generate_voiceover(script, VOICES[stitch_voice])
+                        status.update(label="🔊 Voice video mein jor raha hun…", state="running")
+                        video_bytes = mux_voiceover(video_bytes, audio_bytes)
+                        label_done += " + voiceover"
+                        fname = fname.replace(".mp4", "_voice.mp4")
+                    except Exception as ve:
+                        status.write(f"⚠️ Voiceover fail ({ve}) — baghair voice ke de raha hun.")
+                st.session_state["stitch_video"] = video_bytes
+                st.session_state["stitch_name"] = fname
+                st.session_state["stitch_label_done"] = label_done
+                st.session_state["stitch_space_used"] = "Uploaded clips (no GPU used)"
+                st.rerun()
+            except Exception as exc:
+                st.error(f"❌ Stitch fail: {exc}")
+                with st.expander("🔧 Technical details"):
+                    st.code("".join(traceback.format_exception(exc))[-3000:])
+    show_result("stitch", "Stitched video")
+
+
+with tab4:
     st.subheader("📋 Surveys")
     st.write(
         "Neeche diye gaye surveys mukammal karen — "
