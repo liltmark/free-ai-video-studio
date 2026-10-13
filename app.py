@@ -543,7 +543,7 @@ with st.sidebar:
     width, height = RESOLUTIONS[res_label]
     duration = st.slider(
         "Duration (seconds)",
-        min_value=1, max_value=8, value=3, step=1,
+        min_value=1, max_value=8, value=3, step=1, key="_duration_slider",
         help="Lambi video = zyada queue/wait time.",
     )
     guidance = st.slider(
@@ -648,7 +648,14 @@ with tab1:
     num_clips = 4
     story_lines = ""
     if story_mode:
-        num_clips = st.slider("Kitne clips?", min_value=2, max_value=6, value=4,
+        # 30-second quick preset — sets 4 clips × 8s, reruns to update sliders
+        if st.button("🎯 30-Second Ad Preset (4 clips × 8s)",
+                     help="Ek click mein 30+ second ki ad video ki setting"):
+            st.session_state["_num_clips_slider"] = 4
+            st.session_state["_duration_slider"] = 8
+            st.rerun()
+        num_clips = st.slider("Kitne clips?", min_value=2, max_value=6,
+                              value=4, key="_num_clips_slider",
                               help="Har clip max ~8 sec. 4 clips ≈ 32 sec.")
         st.caption(f"📏 Total: ~{num_clips * duration} seconds "
                    f"({num_clips} clips × {duration}s)")
