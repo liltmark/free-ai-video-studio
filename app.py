@@ -446,6 +446,52 @@ def mux_voiceover(video_bytes: bytes, audio_bytes: bytes) -> bytes:
         return f.read()
 
 
+# ---------------- Lip-Sync (free public Spaces) ----------------
+SPACE_LATENTSYNC = "fffiloni/LatentSync"  # best quality, ZeroGPU
+SPACE_WAV2LIP_CPU = "manavisrani07/gradio-lipsync-wav2lip"  # CPU, no quota, slow
+
+def lip_sync_video(video_bytes: bytes, audio_bytes: bytes, status=None) -> bytes:
+    """Lip-sync video to audio via public Spaces.
+    Tries LatentSync (GPU, fast) → falls back to Wav2Lip CPU (slow, no quota).
+    Returns lip-synced MP4 bytes."""
+    from gradio_client.utils import handle_file
+    import os
+    tmpdir = tempfile.mkdtemp()
+    vp = os.path.join(tmpdir, "v.mp4")
+    ap = os.path.join(tmpdir, "a.mp3")
+    with open(vp, "wb") as f:
+        f.write(video_bytes)
+    with open(ap, "wb") as f:
+        f.write(audio_bytes)
+    # Primary: LatentSync (best quality)
+    try:
+        if status:
+            status.write("🎤 LatentSync se lip-sync kar raha hun…")
+        client = Client(SPACE_LATENTSYNC)
+        result = client.predict(
+            input_video_path=handle_file(vp),
+            input_audio_path=handle_file(ap),
+            api_name="/generate_lip_sync_video",
+        )
+        out_path = result[0] if isinstance(result, (list, tuple)) else result
+        with open(out_path, "rb") as f:
+            return f.read()
+    except Exception as e:
+        err = str(e)
+        if status:
+            status.write(f"⚠️ LatentSync fail ({err[:100]}) — CPU fallback try kar raha hun…")
+        # Fallback: Wav2Lip on CPU (slow but no quota)
+        client = Client(SPACE_WAV2LIP_CPU)
+        result = client.predict(
+            handle_file(vp), handle_file(ap),
+            "wav2lip_gan", 0, 10, 0, 0, 1,
+            api_name="/generate",
+        )
+        out_path = result[0] if isinstance(result, (list, tuple)) else result
+        with open(out_path, "rb") as f:
+            return f.read()
+
+
 def generate_story(status, preferred: str | None, clip_prompts: list,
                    **base_params):
     """Multi-clip story: clip 1 via text-to-video, baqi clips image-to-video
@@ -863,6 +909,11 @@ with tab3:
         placeholder="Is your drain clogged? Call EasyFix Plumbing now — same day service!",
     )
     stitch_voice = st.selectbox("Voice", list(VOICES.keys()), index=0, key="stitch_voice")
+    stitch_lipsync = st.checkbox(
+        "🎤 Lip-sync (honth awaz se milao)",
+        value=False, key="stitch_lipsync",
+        help="Video ke character ke honth voiceover se milenge. Thora time lagta hai.",
+    )
     if st.button("🎬 Stitch + Voiceover", type="primary", use_container_width=True, key="stitch_go"):
         if not uploaded or len(uploaded) < 1:
             st.error("✏️ Pehle kam az kam 1 video clip upload karen.")
@@ -878,14 +929,29 @@ with tab3:
                 label_done = f"{len(clips)} clips stitched" if len(clips) > 1 else "Video"
                 fname = f"stitched_{int(time.time())}.mp4"
                 script = stitch_script.strip()
+                audio_bytes = None
                 if script:
                     try:
                         status.update(label="🎙️ Voiceover bana raha hun…", state="running")
                         audio_bytes = generate_voiceover(script, VOICES[stitch_voice])
-                        status.update(label="🔊 Voice video mein jor raha hun…", state="running")
-                        video_bytes = mux_voiceover(video_bytes, audio_bytes)
-                        label_done += " + voiceover"
-                        fname = fname.replace(".mp4", "_voice.mp4")
+                        if stitch_lipsync:
+                            # Lip-sync needs raw video + audio (not muxed yet)
+                            status.update(label="🎤 Lip-sync kar raha hun…", state="running")
+                            try:
+                                video_bytes = lip_sync_video(video_bytes, audio_bytes, status)
+                                label_done += " + lip-sync"
+                                fname = fname.replace(".mp4", "_lipsync.mp4")
+                            except Exception as le:
+                                status.write(f"⚠️ Lip-sync fail ({str(le)[:120]}) — normal voiceover de raha hun.")
+                                status.update(label="🔊 Voice video mein jor raha hun…", state="running")
+                                video_bytes = mux_voiceover(video_bytes, audio_bytes)
+                                label_done += " + voiceover"
+                                fname = fname.replace(".mp4", "_voice.mp4")
+                        else:
+                            status.update(label="🔊 Voice video mein jor raha hun…", state="running")
+                            video_bytes = mux_voiceover(video_bytes, audio_bytes)
+                            label_done += " + voiceover"
+                            fname = fname.replace(".mp4", "_voice.mp4")
                     except Exception as ve:
                         status.write(f"⚠️ Voiceover fail ({ve}) — baghair voice ke de raha hun.")
                 st.session_state["stitch_video"] = video_bytes
