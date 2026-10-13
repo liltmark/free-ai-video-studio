@@ -1,33 +1,31 @@
 """
-🎬 Free AI Video Studio
-=======================
-Text-to-Video + Image-to-Video web app powered by Hugging Face Inference Providers.
+🎬 Free AI Video Studio — Gradio Edition
+========================================
+Text-to-Video + Image-to-Video web app powered by PUBLIC Hugging Face
+Gradio Spaces via `gradio_client`.
 
 * Hosting ......... 100% FREE on Streamlit Community Cloud
-* Video generation . runs on HF's inference providers (fal-ai, replicate, novita,
-                      together, wavespeed) through the `huggingface_hub` SDK.
-                      Usage is billed against your Hugging Face account's
-                      "Inference Providers" credits. The free tier includes only a
-                      small monthly credit allowance (NOT unlimited).
+* Video generation . 100% FREE — calls public ZeroGPU demo Spaces directly.
+                      NO Hugging Face token, NO API keys, NO credits needed.
+                      If one Space is busy/down, the app automatically tries
+                      the next one in the fallback chain.
 
 No GPU, no torch, no heavy downloads needed in the app: it is just a
-lightweight front-end, the video models run on the providers' servers.
+lightweight front-end, the video models run on the public Spaces.
 """
 
 from __future__ import annotations
 
+import random
+import tempfile
 import time
 import traceback
+import urllib.request
 
 import streamlit as st
 import streamlit.components.v1 as components
-from huggingface_hub import InferenceClient
-from huggingface_hub.utils import HfHubHTTPError
-
-try:  # available in huggingface_hub >= 0.19
-    from huggingface_hub import InferenceTimeoutError
-except ImportError:  # pragma: no cover - very old huggingface_hub versions
-    InferenceTimeoutError = Exception  # type: ignore[misc,assignment]
+from gradio_client import Client
+from gradio_client.utils import Status
 
 
 # ----------------------------------------------------------------------------
@@ -48,29 +46,197 @@ SURVEY_LINKS = [
 
 
 # ----------------------------------------------------------------------------
-# Config
+# Public Gradio Spaces (verified live via gradio_client)
+# ----------------------------------------------------------------------------
+# Har Space ke liye ek adapter function hai jo sahi endpoint + parameters
+# ke saath job submit karta hai. Koi API key / token nahi chahiye.
+
+SPACE_LTX = "Lightricks/ltx-video-distilled"      # official LTX-Video demo
+SPACE_COG5 = "zai-org/CogVideoX-5B-Space"         # official CogVideoX 5B demo
+SPACE_COG2 = "zai-org/CogVideoX-2B-Space"         # official CogVideoX 2B demo
+
+JOB_TIMEOUT = 1800  # seconds (30 min) — public queues can be slow at peak times
+
+
+def _ltx_submit(client: Client, kind: str, prompt: str, negative: str,
+                image_path, width: int, height: int, duration: float,
+                seed: int, guidance: float):
+    """Submit to LTX-Video Space. kind: 't2v' or 'i2v'."""
+    rnd = (seed == -1)
+    frames = max(9, min(257, int(duration * 24)))
+    api = "/text_to_video" if kind == "t2v" else "/image_to_video"
+    mode = "text-to-video" if kind == "t2v" else "image-to-video"
+    return client.submit(
+        prompt=prompt,
+        negative_prompt=negative,
+        input_image_filepath=image_path,      # None for text-to-video
+        input_video_filepath=None,
+        height_ui=height,
+        width_ui=width,
+        mode=mode,
+        duration_ui=duration,
+        ui_frames_to_use=frames,
+        seed_ui=0 if rnd else seed,
+        randomize_seed=rnd,
+        ui_guidance_scale=guidance,
+        improve_texture_flag=False,
+        api_name=api,
+    )
+
+
+def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
+                image_path, width: int, height: int, duration: float,
+                seed: int, guidance: float):
+    """Submit to CogVideoX Space (/generate handles both t2v and i2v)."""
+    seed_val = random.randint(0, 2 ** 31 - 1) if seed == -1 else seed
+    return client.submit(
+        prompt=prompt,
+        image_input=image_path,               # None → text-to-video
+        video_input=None,
+        video_strength=0.5,
+        seed_value=seed_val,
+        scale_status=False,
+        rife_status=False,
+        api_name="/generate",
+    )
+
+
+# Space registry: label + submit adapter. Order = fallback priority.
+SPACE_ADAPTERS = {
+    SPACE_LTX:  {"label": "LTX-Video (fast)", "fn": _ltx_submit},
+    SPACE_COG5: {"label": "CogVideoX-5B",     "fn": _cog_submit},
+    SPACE_COG2: {"label": "CogVideoX-2B",     "fn": _cog_submit},
+}
+
+T2V_CHAIN = [SPACE_LTX, SPACE_COG5, SPACE_COG2]
+I2V_CHAIN = [SPACE_LTX, SPACE_COG5, SPACE_COG2]
+
+_client_cache: dict = {}
+
+
+def get_client(space_id: str) -> Client:
+    """Cache one gradio_client per Space (connect handshake is slow)."""
+    if space_id not in _client_cache:
+        _client_cache[space_id] = Client(space_id)
+    return _client_cache[space_id]
+
+
+# ----------------------------------------------------------------------------
+# Helpers
 # ----------------------------------------------------------------------------
 
-T2V_MODELS = {
-    "Wan 2.2 (14B) — recommended": "Wan-AI/Wan2.2-T2V-A14B",
-    "HunyuanVideo (Tencent)": "tencent/HunyuanVideo",
-    "Mochi 1 Preview (Genmo)": "genmo/mochi-1-preview",
-    "Wan 2.1 (14B)": "Wan-AI/Wan2.1-T2V-14B",
-    "LTX-Video (Lightricks)": "Lightricks/LTX-Video",
-    "CogVideoX-5B (gated: accept license on model page first)": "THUDM/CogVideoX-5b",
-}
+def _result_to_bytes(result) -> bytes:
+    """Turn a gradio_client job result into MP4 bytes. Never crashes silently."""
+    def _path_of(r):
+        if isinstance(r, str):
+            return r if r.lower().endswith(".mp4") else None
+        if isinstance(r, dict):
+            p = r.get("path") or r.get("video") or r.get("url")
+            if isinstance(p, str) and p.lower().endswith(".mp4"):
+                return p
+            for v in r.values():
+                found = _path_of(v)
+                if found:
+                    return found
+            return None
+        if isinstance(r, (list, tuple)):
+            for item in r:
+                found = _path_of(item)
+                if found:
+                    return found
+        return None
 
-I2V_MODELS = {
-    "Wan 2.2 (14B) — recommended": "Wan-AI/Wan2.2-I2V-A14B",
-    "LTX-Video (Lightricks)": "Lightricks/LTX-Video",
-    "Wan 2.1 (14B, 480p)": "Wan-AI/Wan2.1-I2V-14B-480P",
-    "CogVideoX-5B (gated: accept license on model page first)": "THUDM/CogVideoX-5b",
-}
+    path = _path_of(result)
+    if not path:
+        raise RuntimeError(f"Space returned an unexpected result: {str(result)[:200]}")
+    if path.startswith("http"):
+        with urllib.request.urlopen(path, timeout=180) as resp:
+            return resp.read()
+    with open(path, "rb") as f:
+        return f.read()
 
-# Providers that serve text-to-video / image-to-video through HF routing.
-PROVIDERS = ["auto", "fal-ai", "replicate", "novita", "together", "wavespeed"]
 
-REQUEST_TIMEOUT = 1500  # seconds (25 min) — video generation is slow
+def _friendly_space_error(exc: Exception) -> str:
+    low = str(exc).lower()
+    if "queue_full" in low or "queue is full" in low:
+        return ("⏳ **Sab Spaces busy hain.** Public free Spaces par rush hota hai — "
+                "kuch minute ruk kar dobara try karein.")
+    if "timeout" in low or "timed out" in low:
+        return ("⏳ **Request timeout.** Space ne jawab nahi diya (lambi queue). "
+                "Dobara try karein — app khud agla Space try karegi.")
+    if "connection" in low or "unreachable" in low or "failed to connect" in low:
+        return ("🔌 **Space se connect nahi ho saka.** Shayad wo Space down hai — "
+                "app ne agla Space try kiya hoga.")
+    short = str(exc).strip()[:350]
+    return f"⚠️ **Generation fail ho gayi:** {short}"
+
+
+def generate_with_fallback(kind: str, status, preferred: str | None, **params):
+    """Generate via public Spaces with automatic fallback.
+
+    Tries the preferred Space first, then the rest of the chain.
+    Each Space gets one retry on transient errors. Live queue progress
+    is shown in the `status` (st.status) container.
+    Returns (video_bytes, space_label). Raises last error if all fail.
+    """
+    chain = T2V_CHAIN if kind == "t2v" else I2V_CHAIN
+    if preferred in chain:
+        chain = [preferred] + [s for s in chain if s != preferred]
+
+    last_exc: Exception | None = None
+    for space_id in chain:
+        label = SPACE_ADAPTERS[space_id]["label"]
+        submit_fn = SPACE_ADAPTERS[space_id]["fn"]
+        for attempt in (1, 2):
+            try:
+                status.update(label=f"🎥 Connecting to {label}…", state="running")
+                client = get_client(space_id)
+                job = submit_fn(client, kind, **params)
+                start = time.time()
+                last_qpos = None
+                while not job.done():
+                    if time.time() - start > JOB_TIMEOUT:
+                        try:
+                            job.cancel()
+                        except Exception:
+                            pass
+                        raise TimeoutError(f"{label}: 30 min se zyada lag gaya")
+                    try:
+                        stt = job.status()
+                        code = stt.code if hasattr(stt, "code") else None
+                        qpos = getattr(stt, "queue_position", None)
+                        if code == Status.IN_QUEUE and qpos and qpos != last_qpos:
+                            last_qpos = qpos
+                            status.update(
+                                label=f"🎥 {label} — queue mein #{qpos}…",
+                                state="running")
+                        elif code == Status.PROCESSING:
+                            status.update(
+                                label=f"🎥 {label} — video ban rahi hai…",
+                                state="running")
+                    except Exception:
+                        pass
+                    time.sleep(10)
+                video_bytes = _result_to_bytes(job.result())
+                status.update(label=f"✅ Video ready — via {label}",
+                              state="complete")
+                return video_bytes, label
+            except Exception as exc:  # noqa: BLE001 — fallback below
+                last_exc = exc
+                low = str(exc).lower()
+                transient = any(k in low for k in (
+                    "timeout", "timed out", "queue", "busy", "429", "503",
+                    "connection", "temporarily"))
+                if transient and attempt == 1:
+                    status.write(f"⏳ {label} busy — dobara try kar raha hun…")
+                    time.sleep(5)
+                    continue
+                status.write(f"⚠️ {label} fail — agla Space try kar raha hun…")
+                break  # → next Space
+
+    status.update(label="❌ Sab Spaces fail/busy", state="error")
+    assert last_exc is not None
+    raise last_exc
 
 
 # ----------------------------------------------------------------------------
@@ -116,288 +282,69 @@ st.markdown(
 
 st.markdown('<p class="hero">🎬 Free AI Video Studio</p>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="sub">Text-to-Video, Image-to-Video &amp; Surveys — powered by open-source models '
-    "(Wan, HunyuanVideo, Mochi, LTX-Video, CogVideoX) via Hugging Face.</p>",
+    '<p class="sub">Text-to-Video &amp; Image-to-Video — 100% free, no API keys. '
+    "Powered by public Hugging Face Spaces (LTX-Video, CogVideoX).</p>",
     unsafe_allow_html=True,
 )
 
 
 # ----------------------------------------------------------------------------
-# Helpers
+# Sidebar — settings (NO token needed!)
 # ----------------------------------------------------------------------------
 
-def friendly_error(exc: Exception) -> str:
-    """Turn provider/API failures into plain-language guidance. Never crashes."""
-    raw = str(exc).strip() or repr(exc)
-    low = raw.lower()
-    status = getattr(getattr(exc, "response", None), "status_code", None)
-
-    if status == 401 or "unauthorized" in low or ("invalid" in low and "token" in low):
-        return (
-            "🔑 **Token problem.** Your Hugging Face token is invalid or expired.\n\n"
-            "Fix: create a new **fine-grained** token at `hf.co/settings/tokens` with the "
-            "**`Make calls to Inference Providers`** permission, then paste it in the sidebar."
-        )
-    if status == 402 or "insufficient credit" in low or "not enough credit" in low \
-            or "credit balance" in low or "billing" in low:
-        return (
-            "💳 **Free credits exhausted.** Video generation is billed against your Hugging Face "
-            "account's Inference Providers credits. The free tier only includes a **small monthly "
-            "allowance** (a few short clips — not unlimited). It resets next month, or you can add "
-            "credits to keep going."
-        )
-    if status == 403 and ("gated" in low or "license" in low or "accept" in low):
-        return (
-            "🔒 **Gated model.** Open the model page on huggingface.co while logged in and click "
-            "**Agree / Accept** on its license, then press Generate again."
-        )
-    if status == 404 or "not found" in low or "no provider" in low \
-            or "not supported" in low:
-        return (
-            "🔍 **That model isn't being served by any provider right now.** Pick a different "
-            "model from the sidebar dropdown (Wan 2.2 usually works) or try another provider."
-        )
-    if status == 429 or "rate limit" in low or "too many requests" in low:
-        return "⏳ **Rate limited.** Wait a minute or two, then press Generate again."
-    if isinstance(exc, InferenceTimeoutError) or status == 503 \
-            or "timeout" in low or "timed out" in low or "overloaded" in low:
-        return (
-            "🐢 **The provider is busy or the request timed out.** Cheap/free tiers queue up at "
-            "busy times — this is normal. Wait 1–2 minutes and press **Generate** again. "
-            "Nothing is broken."
-        )
-    short = raw if len(raw) < 400 else raw[:400] + "…"
-    return f"⚠️ **Something went wrong:** {short}"
-
-
-def make_client(token: str, provider: str) -> InferenceClient:
-    return InferenceClient(token=token, provider=provider, timeout=REQUEST_TIMEOUT)
-
-
-def valid_token(token: str) -> bool:
-    return bool(token) and token.strip().startswith("hf_")
-
-
-# ----------------------------------------------------------------------------
-# Smart fallback + retry engine
-# ----------------------------------------------------------------------------
-# The user's chosen model is always tried FIRST. If it fails, the app walks
-# through the fallback chain automatically so the user still gets a video.
-# Transient errors (rate limits, busy providers, timeouts) are retried with
-# exponential backoff; permanent errors (bad token, no credits) stop fast.
-
-T2V_FALLBACK_ORDER = [
-    T2V_MODELS["Wan 2.2 (14B) — recommended"],
-    T2V_MODELS["LTX-Video (Lightricks)"],
-    T2V_MODELS["Wan 2.1 (14B)"],
-    T2V_MODELS["HunyuanVideo (Tencent)"],
-    T2V_MODELS["Mochi 1 Preview (Genmo)"],
-    T2V_MODELS["CogVideoX-5B (gated: accept license on model page first)"],
-]
-
-I2V_FALLBACK_ORDER = [
-    I2V_MODELS["Wan 2.2 (14B) — recommended"],
-    I2V_MODELS["LTX-Video (Lightricks)"],
-    I2V_MODELS["Wan 2.1 (14B, 480p)"],
-    I2V_MODELS["CogVideoX-5B (gated: accept license on model page first)"],
-]
-
-MAX_ATTEMPTS_PER_MODEL = 2      # retries for transient errors, per model
-RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
-FATAL_STATUSES = {401, 402}     # bad token / no credits → stop, no model can help
-
-
-def _status_of(exc: Exception):
-    """HTTP status code if the exception carries one, else None."""
-    return getattr(getattr(exc, "response", None), "status_code", None)
-
-
-def _is_retryable(exc: Exception) -> bool:
-    """True if retrying the SAME model might help (rate limit, busy, timeout)."""
-    status = _status_of(exc)
-    if status in FATAL_STATUSES or status in (403, 404):
-        return False
-    if status in RETRYABLE_STATUSES:
-        return True
-    if isinstance(exc, InferenceTimeoutError):
-        return True
-    low = str(exc).lower()
-    return any(k in low for k in (
-        "rate limit", "too many requests", "timeout", "timed out",
-        "overloaded", "temporarily unavailable", "try again later", "capacity",
-    ))
-
-
-def _model_label(kind: str, model_id: str) -> str:
-    """Short human label for a model id, e.g. 'Wan 2.2 (14B)'."""
-    mapping = T2V_MODELS if kind == "t2v" else I2V_MODELS
-    for label, mid in mapping.items():
-        if mid == model_id:
-            return label.split(" — ")[0].split(" (gated")[0]
-    return model_id
-
-
-def _short_reason(exc: Exception) -> str:
-    status = _status_of(exc)
-    if status:
-        return f"HTTP {status}"
-    low = str(exc).lower()
-    if "timeout" in low or "timed out" in low:
-        return "timeout"
-    if "overload" in low or "capacity" in low:
-        return "provider overloaded"
-    return "error"
-
-
-def _ordered_models(kind: str, chosen: str) -> list:
-    """User's chosen model first, then the fallback chain (no duplicates)."""
-    base = T2V_FALLBACK_ORDER if kind == "t2v" else I2V_FALLBACK_ORDER
-    return [chosen] + [m for m in base if m != chosen]
-
-
-def generate_video_with_fallback(client: InferenceClient, kind: str,
-                                 status, model: str, **gen_kwargs):
-    """Generate a video, walking the fallback chain on failure.
-
-    kind: "t2v" or "i2v". status: an st.status container for live updates.
-    Pass the media via underscore kwargs (popped before the API call):
-      t2v → _prompt_text="...";  i2v → _image_bytes=b"...", prompt="motion..."
-    Everything else in gen_kwargs goes straight to the InferenceClient call.
-    Returns (video_bytes, model_label_used). Raises the last error if all fail.
-    """
-    prompt_text = gen_kwargs.pop("_prompt_text", None)
-    image_bytes = gen_kwargs.pop("_image_bytes", None)
-    last_exc: Exception | None = None
-
-    for model_id in _ordered_models(kind, model):
-        label = _model_label(kind, model_id)
-        for attempt in range(1, MAX_ATTEMPTS_PER_MODEL + 1):
-            try:
-                status.update(label=f"🎥 Trying {label}… (attempt {attempt})",
-                              state="running")
-                if kind == "t2v":
-                    video_bytes = client.text_to_video(
-                        prompt_text, model=model_id, **gen_kwargs)
-                else:
-                    video_bytes = client.image_to_video(
-                        image_bytes, model=model_id, **gen_kwargs)
-                status.update(label=f"✅ Video ready — via {label}",
-                              state="complete")
-                return video_bytes, label
-            except Exception as exc:  # noqa: BLE001 — classified below
-                last_exc = exc
-                if _status_of(exc) in FATAL_STATUSES:
-                    # Token/credits problem: no other model can help. Stop fast.
-                    status.update(label="❌ Stopped", state="error")
-                    raise
-                if not _is_retryable(exc):
-                    status.write(
-                        f"⚠️ {label} failed ({_short_reason(exc)}) — "
-                        "trying next model…")
-                    break  # → next model
-                wait = 2 ** attempt * 5  # 10s, then 20s
-                status.write(
-                    f"⏳ {label} busy ({_short_reason(exc)}), "
-                    f"retrying in {wait}s…")
-                time.sleep(wait)
-        # → next model in the chain
-
-    status.update(label="❌ All models failed", state="error")
-    assert last_exc is not None
-    raise last_exc
-
-
-# ----------------------------------------------------------------------------
-# Sidebar — credentials + generation settings
-# ----------------------------------------------------------------------------
+RESOLUTIONS = {
+    "Portrait 720×1280 (Shorts)": (1280, 720),   # (width, height)
+    "Square 512×512": (512, 512),
+    "Landscape 1280×720": (1280, 720),
+}
 
 with st.sidebar:
     st.header("⚙️ Settings")
+    st.success("🔓 **No API key needed!**\nYe tool public free Spaces use karta hai.")
 
-    token = st.text_input(
-        "Hugging Face Access Token (HF_TOKEN)",
-        type="password",
-        placeholder="hf_xxxxxxxxxxxxxxxx",
-        help="Get a FREE token: huggingface.co → profile → Settings → Access Tokens → "
-             "Create new token (fine-grained, enable 'Make calls to Inference Providers').",
+    space_options = ["Auto (recommended — sab try karega)"] + [
+        f"{SPACE_ADAPTERS[s]['label']} ({s})" for s in T2V_CHAIN
+    ]
+    space_choice = st.selectbox(
+        "Preferred Space",
+        space_options,
+        help="Auto par app khud best available Space chunti hai; "
+             "agar wo busy ho to agli par chali jati hai.",
     )
-    if token and not valid_token(token):
-        st.warning("Token usually starts with `hf_` — double-check what you pasted.")
-
-    provider = st.selectbox(
-        "Provider",
-        PROVIDERS,
-        index=0,
-        help="'auto' lets Hugging Face route to the fastest available video provider.",
-    )
-
-    st.divider()
-    st.subheader("🎥 Text-to-Video model")
-    t2v_label = st.selectbox("Model", list(T2V_MODELS.keys()), index=0)
-    t2v_custom = st.text_input(
-        "…or custom model ID (optional)",
-        placeholder="e.g. Wan-AI/Wan2.2-T2V-A14B",
-        help="Leave empty to use the dropdown choice above.",
-    )
-    t2v_model = t2v_custom.strip() or T2V_MODELS[t2v_label]
-
-    st.subheader("🖼️ Image-to-Video model")
-    i2v_label = st.selectbox("Model ", list(I2V_MODELS.keys()), index=0)
-    i2v_custom = st.text_input(
-        "…or custom model ID (optional) ",
-        placeholder="e.g. Wan-AI/Wan2.2-I2V-A14B",
-    )
-    i2v_model = i2v_custom.strip() or I2V_MODELS[i2v_label]
+    preferred_space = None
+    if not space_choice.startswith("Auto"):
+        preferred_space = space_choice.rsplit("(", 1)[1].rstrip(")")
 
     st.divider()
     st.subheader("🎛️ Generation settings")
-    quality = st.radio(
-        "Quality preset",
-        ["Standard (fast)", "HD (best free quality ~720p)"],
-        horizontal=True,
-        help="HD = zyada steps + zyada frames = behtar quality, lekin slow. "
-             "Free API par ~720p hi max milta hai.",
-    )
-    _hd = quality.startswith("HD")
-    steps = st.slider(
-        "Inference steps (quality ↔ speed)",
-        min_value=10, max_value=50, value=45 if _hd else 30, step=1,
-        help="More steps = better quality but slower generation.",
-    )
-    frames = st.slider(
-        "Frames (clip length)",
-        min_value=16, max_value=121, value=81 if _hd else 49, step=8,
-        help="More frames = longer video. Providers usually render at ~24 fps.",
+    res_label = st.selectbox("Resolution", list(RESOLUTIONS.keys()), index=0)
+    width, height = RESOLUTIONS[res_label]
+    duration = st.slider(
+        "Duration (seconds)",
+        min_value=1, max_value=8, value=3, step=1,
+        help="Lambi video = zyada queue/wait time.",
     )
     guidance = st.slider(
         "Guidance scale (prompt adherence)",
         min_value=1.0, max_value=10.0, value=5.0, step=0.5,
-        help="Higher = follows your prompt more strictly. Too high can look artificial.",
     )
     seed_in = st.number_input(
         "Seed (-1 = random)", min_value=-1, value=-1, step=1,
-        help="Same seed + same prompt = reproducible video.",
     )
     seed = None if seed_in == -1 else int(seed_in)
+    # -1 means random; adapters handle it
+    seed_param = -1 if seed is None else seed
 
     st.divider()
     with st.expander("💡 Free-tier reality check"):
         st.write(
-            "• **Space hosting:** free (CPU basic). The Space sleeps after 48h of "
-            "inactivity and wakes when you open it.\n"
-            "• **HF token:** free.\n"
-            "• **Video generation:** billed against your HF account's Inference "
-            "Providers credits. The free tier includes only a **small monthly "
-            "allowance** — enough for a few short test clips, not unlimited use. "
-            "The app will tell you clearly if credits run out.\n"
-            "• **Speed:** expect several minutes per clip on free/cheap tiers; "
-            "queues get busy at peak times."
+            "• **Bilkul free — koi token/API key nahi chahiye.**\n"
+            "• Video **public Hugging Face Spaces** (LTX-Video, CogVideoX) par banti hai.\n"
+            "• **Queue:** free Spaces par rush hota hai — busy time mein 10–30 min "
+            "lag sakte hain. App khud agla Space try karti hai.\n"
+            "• **Space hosting:** free (Streamlit Community Cloud)."
         )
 
-
-# ----------------------------------------------------------------------------
-# Tabs
-# ----------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------
 # Ad gate — tool use karne se pehle ek ad dekhna lazmi
@@ -441,9 +388,9 @@ def show_result(key_prefix: str, label: str) -> None:
     if not data:
         return
     st.success(f"✅ {label} ready!")
-    model_used = st.session_state.get(f"{key_prefix}_model_used")
-    if model_used:
-        st.caption(f"🤖 Generated with: **{model_used}**")
+    space_used = st.session_state.get(f"{key_prefix}_space_used")
+    if space_used:
+        st.caption(f"🤖 Generated with: **{space_used}** (public free Space)")
     st.video(data, format="video/mp4")
     st.download_button(
         "⬇️ Download MP4",
@@ -457,49 +404,41 @@ def show_result(key_prefix: str, label: str) -> None:
 # ---------------- Tab 1: Text to Video ----------------
 with tab1:
     st.subheader("Describe it → get an MP4")
+    st.caption("⚡ Auto-fallback ON: ek Space busy ho to app khud agla try karegi. Koi key nahi chahiye.")
     prompt = st.text_area(
         "Prompt",
         height=120,
-        placeholder="A cinematic drone shot flying over snowy mountains at golden hour, "
-                    "photorealistic, smooth motion",
+        placeholder="A cheerful plumber waves hello at the camera, bright workshop, "
+                    "expressive face, medium close-up",
     )
     negative = st.text_input(
         "Negative prompt (optional)",
         value="blurry, low quality, distorted faces, watermark, text",
     )
 
-    st.caption("⚡ Smart fallback ON: ye model busy/fail ho to app khud agla model try karegi.")
     if st.button("🚀 Generate Video", type="primary", use_container_width=True, key="t2v_go"):
-        if not valid_token(token):
-            st.error("🔑 Pehle sidebar mein apna **HF_TOKEN** paste karein (free token: "
-                     "`huggingface.co → Settings → Access Tokens`).")
-        elif not prompt.strip():
+        if not prompt.strip():
             st.error("✏️ Pehle koi prompt likhein — phir Generate dabayein.")
         else:
-            client = make_client(token.strip(), provider)
-            kwargs: dict = {
-                "num_frames": frames,
-                "num_inference_steps": steps,
-                "guidance_scale": guidance,
-            }
-            if negative.strip():
-                kwargs["negative_prompt"] = [negative.strip()]  # API expects a list
-            if seed is not None:
-                kwargs["seed"] = seed
-
             status = st.status("🎥 Starting generation…", expanded=True)
             try:
-                video_bytes, used_label = generate_video_with_fallback(
-                    client, "t2v", status, model=t2v_model,
-                    _prompt_text=prompt.strip(), **kwargs)
-
+                video_bytes, used_label = generate_with_fallback(
+                    "t2v", status, preferred_space,
+                    prompt=prompt.strip(),
+                    negative=negative.strip(),
+                    image_path=None,
+                    width=width, height=height,
+                    duration=float(duration),
+                    seed=seed_param,
+                    guidance=guidance,
+                )
                 fname = f"t2v_{int(time.time())}.mp4"
                 st.session_state["t2v_video"] = video_bytes
                 st.session_state["t2v_name"] = fname
-                st.session_state["t2v_model_used"] = used_label
+                st.session_state["t2v_space_used"] = used_label
                 st.rerun()
             except Exception as exc:  # never crash the app — explain instead
-                st.error(friendly_error(exc))
+                st.error(_friendly_space_error(exc))
                 with st.expander("🔧 Technical details (for debugging)"):
                     st.code("".join(traceback.format_exception(exc))[-3000:])
 
@@ -518,7 +457,7 @@ with tab1:
             "**Example 1:**\n"
             "`A cheerful plumber with a friendly expressive face, wearing blue overalls, "
             "looks at the camera and gives a thumbs up with a big smile, natural hand motion, "
-            "medium close-up, bright workshop lighting, photorealistic`\n\n"
+            "medium close-up, bright workshop lighting`\n\n"
             "**Example 2:**\n"
             "`A brave firefighter woman with determined expressive eyes runs toward the camera "
             "through light smoke, coat flowing naturally, cinematic slow motion, dramatic lighting`"
@@ -529,6 +468,7 @@ with tab1:
 # ---------------- Tab 2: Image to Video ----------------
 with tab2:
     st.subheader("Upload a photo → animate it")
+    st.caption("⚡ Auto-fallback ON: ek Space busy ho to app khud agla try karegi. Koi key nahi chahiye.")
     uploaded = st.file_uploader(
         "Photo upload karein (JPG / PNG)",
         type=["jpg", "jpeg", "png", "webp"],
@@ -547,44 +487,39 @@ with tab2:
         value="blurry, low quality, distorted faces, watermark, text",
     )
 
-    st.caption("⚡ Smart fallback ON: ye model busy/fail ho to app khud agla model try karegi.")
     if st.button("🚀 Animate Image", type="primary", use_container_width=True, key="i2v_go"):
-        if not valid_token(token):
-            st.error("🔑 Pehle sidebar mein apna **HF_TOKEN** paste karein (free token: "
-                     "`huggingface.co → Settings → Access Tokens`).")
-        elif uploaded is None:
+        if uploaded is None:
             st.error("🖼️ Pehle koi photo upload karein.")
         elif not motion.strip():
             st.error("✏️ Motion prompt likhein — tasveer mein kya harkat ho?")
         else:
-            client = make_client(token.strip(), provider)
-            kwargs2: dict = {
-                "prompt": motion.strip(),
-                "num_frames": frames,
-                "num_inference_steps": steps,
-                "guidance_scale": guidance,
-            }
-            if negative2.strip():
-                kwargs2["negative_prompt"] = negative2.strip()
-            if seed is not None:
-                kwargs2["seed"] = seed
-
-            image_bytes = uploaded.getvalue()
+            # gradio_client needs a real file path for image upload
+            with tempfile.NamedTemporaryFile(
+                    suffix=".png", delete=False) as tmp:
+                tmp.write(uploaded.getvalue())
+                tmp_path = tmp.name
             status = st.status("🎞️ Starting animation…", expanded=True)
             try:
-                video_bytes, used_label = generate_video_with_fallback(
-                    client, "i2v", status, model=i2v_model,
-                    _image_bytes=image_bytes, **kwargs2)
-
+                video_bytes, used_label = generate_with_fallback(
+                    "i2v", status, preferred_space,
+                    prompt=motion.strip(),
+                    negative=negative2.strip(),
+                    image_path=tmp_path,
+                    width=width, height=height,
+                    duration=float(duration),
+                    seed=seed_param,
+                    guidance=guidance,
+                )
                 fname = f"i2v_{int(time.time())}.mp4"
                 st.session_state["i2v_video"] = video_bytes
                 st.session_state["i2v_name"] = fname
-                st.session_state["i2v_model_used"] = used_label
+                st.session_state["i2v_space_used"] = used_label
                 st.rerun()
             except Exception as exc:  # never crash the app — explain instead
-                st.error(friendly_error(exc))
+                st.error(_friendly_space_error(exc))
                 with st.expander("🔧 Technical details (for debugging)"):
                     st.code("".join(traceback.format_exception(exc))[-3000:])
+
 
     st.markdown(
         '<div class="tip">💡 <b>Tip:</b> saaf, roshan tasveerain behtar animate hoti hain. '
@@ -615,6 +550,6 @@ with tab3:
 
 st.divider()
 st.caption(
-    "Built with Streamlit + `huggingface_hub`. Models: Wan 2.x, HunyuanVideo, Mochi, "
-    "LTX-Video, CogVideoX via Hugging Face Inference Providers."
+    "Built with Streamlit + `gradio_client`. Videos via public Hugging Face "
+    "Spaces: LTX-Video, CogVideoX — no API keys needed."
 )
