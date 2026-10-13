@@ -44,6 +44,9 @@ SURVEY_LINKS = [
     # {"title": "Sample Survey", "url": "https://example.com", "desc": "Mukhtasar wazahat"},
 ]
 
+# Pixabay free API key (stock videos — no quota). Get free at pixabay.com/api/docs
+PIXABAY_API_KEY = "58029727-e3e5a7f4e4b4d5ab8caa6f484"
+
 
 
 
@@ -890,12 +893,14 @@ with tab4:
     src = st.radio("Source", ["Pixabay", "Pexels"], horizontal=True,
                    help="Pexels keys paused hain — Pixabay abhi free keys de raha hai.")
     if src == "Pixabay":
+        _default_px = PIXABAY_API_KEY or ""
         stock_key = st.text_input(
             "Pixabay API Key (free: pixabay.com/api/docs)",
             type="password",
             key="pixabay_key",
+            value=_default_px,
             placeholder="Paste free API key",
-        )
+        ) or _default_px
     else:
         stock_key = st.text_input(
             "Pexels API Key (free: pexels.com/api)",
