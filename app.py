@@ -854,16 +854,56 @@ def _pexels_search(query: str, api_key: str, per_page: int = 12):
     return out
 
 
+def _pixabay_search(query: str, api_key: str, per_page: int = 12):
+    """Search Pixabay videos. Returns list of dicts (same shape as Pexels)."""
+    import json as _json
+    import urllib.parse as _up
+    q = _up.quote(query)
+    per_page = max(3, min(200, per_page))
+    url = (f"https://pixabay.com/api/videos/?key={_up.quote(api_key)}"
+           f"&q={q}&per_page={per_page}&orientation=vertical&safesearch=true")
+    req = urllib.request.Request(url, headers={"User-Agent": "FreeAIVideoStudio/1.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = _json.loads(resp.read().decode())
+    out = []
+    for v in data.get("hits", []):
+        vids = (v.get("videos") or {})
+        # prefer large, fallback medium/small
+        best = vids.get("large") or vids.get("medium") or vids.get("small")
+        if not best or not best.get("url"):
+            continue
+        out.append({
+            "id": v.get("id"),
+            "duration": v.get("duration"),
+            "url": v.get("pageURL"),
+            "preview": v.get("previewURL"),
+            "file": best["url"],
+            "width": best.get("width"),
+            "height": best.get("height"),
+        })
+    return out
+
+
 with tab4:
-    st.subheader("🎞️ Pexels Stock Videos")
+    st.subheader("🎞️ Stock Videos (Pexels + Pixabay)")
     st.caption("Free stock footage — **koi quota nahi!** Plumbing, electrical, HVAC waghera ke liye.")
-    pexels_key = st.text_input(
-        "Pexels API Key (free: pexels.com/api)",
-        type="password",
-        key="pexels_key",
-        placeholder="Paste free API key",
-        help="pexels.com/api par free account bana kar key lein.",
-    )
+    src = st.radio("Source", ["Pixabay", "Pexels"], horizontal=True,
+                   help="Pexels keys paused hain — Pixabay abhi free keys de raha hai.")
+    if src == "Pixabay":
+        stock_key = st.text_input(
+            "Pixabay API Key (free: pixabay.com/api/docs)",
+            type="password",
+            key="pixabay_key",
+            placeholder="Paste free API key",
+        )
+    else:
+        stock_key = st.text_input(
+            "Pexels API Key (free: pexels.com/api)",
+            type="password",
+            key="pexels_key",
+            placeholder="Paste free API key",
+            help="Note: Pexels ne naye keys pause kiye hain (Oct 2026).",
+        )
     # Quick preset buttons for his 7 home services
     presets = {
         "🔧 Plumbing": "plumber plumbing repair",
@@ -884,13 +924,17 @@ with tab4:
         key="pexels_search_box",
     )
     if st.button("🔍 Search", type="primary") and query:
-        if not pexels_key:
-            st.warning("⚠️ Pehle Pexels API key dalein (free: pexels.com/api)")
+        if not stock_key:
+            st.warning(f"⚠️ Pehle {src} API key dalein (free)")
         else:
-            with st.spinner("Searching Pexels…"):
+            with st.spinner(f"Searching {src}…"):
                 try:
-                    results = _pexels_search(query, pexels_key)
+                    if src == "Pixabay":
+                        results = _pixabay_search(query, stock_key)
+                    else:
+                        results = _pexels_search(query, stock_key)
                     st.session_state["pexels_results"] = results
+                    st.session_state["pexels_src"] = src
                 except Exception as e:
                     st.error(f"Search fail: {e}")
     for r in st.session_state.get("pexels_results", []):
