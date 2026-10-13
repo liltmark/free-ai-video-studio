@@ -3,16 +3,15 @@
 =======================
 Text-to-Video + Image-to-Video web app powered by Hugging Face Inference Providers.
 
-* Hosting ......... 100% FREE on Hugging Face Spaces (Streamlit, CPU basic tier)
+* Hosting ......... 100% FREE on Streamlit Community Cloud
 * Video generation . runs on HF's inference providers (fal-ai, replicate, novita,
                       together, wavespeed) through the `huggingface_hub` SDK.
                       Usage is billed against your Hugging Face account's
-                      "Inference Providers" credits. The free tier includes a
-                      small monthly credit allowance — enough for a few short
-                      test clips (NOT unlimited).
+                      "Inference Providers" credits. The free tier includes only a
+                      small monthly credit allowance (NOT unlimited).
 
-No GPU, no torch, no heavy downloads needed inside the Space: the Space is just
-a lightweight front-end, the video models run on the providers' servers.
+No GPU, no torch, no heavy downloads needed in the app: it is just a
+lightweight front-end, the video models run on the providers' servers.
 """
 
 from __future__ import annotations
@@ -180,6 +179,135 @@ def valid_token(token: str) -> bool:
 
 
 # ----------------------------------------------------------------------------
+# Smart fallback + retry engine
+# ----------------------------------------------------------------------------
+# The user's chosen model is always tried FIRST. If it fails, the app walks
+# through the fallback chain automatically so the user still gets a video.
+# Transient errors (rate limits, busy providers, timeouts) are retried with
+# exponential backoff; permanent errors (bad token, no credits) stop fast.
+
+T2V_FALLBACK_ORDER = [
+    T2V_MODELS["Wan 2.2 (14B) — recommended"],
+    T2V_MODELS["LTX-Video (Lightricks)"],
+    T2V_MODELS["Wan 2.1 (14B)"],
+    T2V_MODELS["HunyuanVideo (Tencent)"],
+    T2V_MODELS["Mochi 1 Preview (Genmo)"],
+    T2V_MODELS["CogVideoX-5B (gated: accept license on model page first)"],
+]
+
+I2V_FALLBACK_ORDER = [
+    I2V_MODELS["Wan 2.2 (14B) — recommended"],
+    I2V_MODELS["LTX-Video (Lightricks)"],
+    I2V_MODELS["Wan 2.1 (14B, 480p)"],
+    I2V_MODELS["CogVideoX-5B (gated: accept license on model page first)"],
+]
+
+MAX_ATTEMPTS_PER_MODEL = 2      # retries for transient errors, per model
+RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+FATAL_STATUSES = {401, 402}     # bad token / no credits → stop, no model can help
+
+
+def _status_of(exc: Exception):
+    """HTTP status code if the exception carries one, else None."""
+    return getattr(getattr(exc, "response", None), "status_code", None)
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """True if retrying the SAME model might help (rate limit, busy, timeout)."""
+    status = _status_of(exc)
+    if status in FATAL_STATUSES or status in (403, 404):
+        return False
+    if status in RETRYABLE_STATUSES:
+        return True
+    if isinstance(exc, InferenceTimeoutError):
+        return True
+    low = str(exc).lower()
+    return any(k in low for k in (
+        "rate limit", "too many requests", "timeout", "timed out",
+        "overloaded", "temporarily unavailable", "try again later", "capacity",
+    ))
+
+
+def _model_label(kind: str, model_id: str) -> str:
+    """Short human label for a model id, e.g. 'Wan 2.2 (14B)'."""
+    mapping = T2V_MODELS if kind == "t2v" else I2V_MODELS
+    for label, mid in mapping.items():
+        if mid == model_id:
+            return label.split(" — ")[0].split(" (gated")[0]
+    return model_id
+
+
+def _short_reason(exc: Exception) -> str:
+    status = _status_of(exc)
+    if status:
+        return f"HTTP {status}"
+    low = str(exc).lower()
+    if "timeout" in low or "timed out" in low:
+        return "timeout"
+    if "overload" in low or "capacity" in low:
+        return "provider overloaded"
+    return "error"
+
+
+def _ordered_models(kind: str, chosen: str) -> list:
+    """User's chosen model first, then the fallback chain (no duplicates)."""
+    base = T2V_FALLBACK_ORDER if kind == "t2v" else I2V_FALLBACK_ORDER
+    return [chosen] + [m for m in base if m != chosen]
+
+
+def generate_video_with_fallback(client: InferenceClient, kind: str,
+                                 status, model: str, **gen_kwargs):
+    """Generate a video, walking the fallback chain on failure.
+
+    kind: "t2v" or "i2v". status: an st.status container for live updates.
+    Pass the media via underscore kwargs (popped before the API call):
+      t2v → _prompt_text="...";  i2v → _image_bytes=b"...", prompt="motion..."
+    Everything else in gen_kwargs goes straight to the InferenceClient call.
+    Returns (video_bytes, model_label_used). Raises the last error if all fail.
+    """
+    prompt_text = gen_kwargs.pop("_prompt_text", None)
+    image_bytes = gen_kwargs.pop("_image_bytes", None)
+    last_exc: Exception | None = None
+
+    for model_id in _ordered_models(kind, model):
+        label = _model_label(kind, model_id)
+        for attempt in range(1, MAX_ATTEMPTS_PER_MODEL + 1):
+            try:
+                status.update(label=f"🎥 Trying {label}… (attempt {attempt})",
+                              state="running")
+                if kind == "t2v":
+                    video_bytes = client.text_to_video(
+                        prompt_text, model=model_id, **gen_kwargs)
+                else:
+                    video_bytes = client.image_to_video(
+                        image_bytes, model=model_id, **gen_kwargs)
+                status.update(label=f"✅ Video ready — via {label}",
+                              state="complete")
+                return video_bytes, label
+            except Exception as exc:  # noqa: BLE001 — classified below
+                last_exc = exc
+                if _status_of(exc) in FATAL_STATUSES:
+                    # Token/credits problem: no other model can help. Stop fast.
+                    status.update(label="❌ Stopped", state="error")
+                    raise
+                if not _is_retryable(exc):
+                    status.write(
+                        f"⚠️ {label} failed ({_short_reason(exc)}) — "
+                        "trying next model…")
+                    break  # → next model
+                wait = 2 ** attempt * 5  # 10s, then 20s
+                status.write(
+                    f"⏳ {label} busy ({_short_reason(exc)}), "
+                    f"retrying in {wait}s…")
+                time.sleep(wait)
+        # → next model in the chain
+
+    status.update(label="❌ All models failed", state="error")
+    assert last_exc is not None
+    raise last_exc
+
+
+# ----------------------------------------------------------------------------
 # Sidebar — credentials + generation settings
 # ----------------------------------------------------------------------------
 
@@ -313,6 +441,9 @@ def show_result(key_prefix: str, label: str) -> None:
     if not data:
         return
     st.success(f"✅ {label} ready!")
+    model_used = st.session_state.get(f"{key_prefix}_model_used")
+    if model_used:
+        st.caption(f"🤖 Generated with: **{model_used}**")
     st.video(data, format="video/mp4")
     st.download_button(
         "⬇️ Download MP4",
@@ -337,6 +468,7 @@ with tab1:
         value="blurry, low quality, distorted faces, watermark, text",
     )
 
+    st.caption("⚡ Smart fallback ON: ye model busy/fail ho to app khud agla model try karegi.")
     if st.button("🚀 Generate Video", type="primary", use_container_width=True, key="t2v_go"):
         if not valid_token(token):
             st.error("🔑 Pehle sidebar mein apna **HF_TOKEN** paste karein (free token: "
@@ -344,28 +476,27 @@ with tab1:
         elif not prompt.strip():
             st.error("✏️ Pehle koi prompt likhein — phir Generate dabayein.")
         else:
-            try:
-                client = make_client(token.strip(), provider)
-                kwargs: dict = {
-                    "model": t2v_model,
-                    "num_frames": frames,
-                    "num_inference_steps": steps,
-                    "guidance_scale": guidance,
-                }
-                if negative.strip():
-                    kwargs["negative_prompt"] = [negative.strip()]  # API expects a list
-                if seed is not None:
-                    kwargs["seed"] = seed
+            client = make_client(token.strip(), provider)
+            kwargs: dict = {
+                "num_frames": frames,
+                "num_inference_steps": steps,
+                "guidance_scale": guidance,
+            }
+            if negative.strip():
+                kwargs["negative_prompt"] = [negative.strip()]  # API expects a list
+            if seed is not None:
+                kwargs["seed"] = seed
 
-                with st.spinner(
-                    "🎥 Video ban rahi hai… is mein chand minute lag sakte hain. "
-                    "Page band na karein."
-                ):
-                    video_bytes = client.text_to_video(prompt.strip(), **kwargs)
+            status = st.status("🎥 Starting generation…", expanded=True)
+            try:
+                video_bytes, used_label = generate_video_with_fallback(
+                    client, "t2v", status, model=t2v_model,
+                    _prompt_text=prompt.strip(), **kwargs)
 
                 fname = f"t2v_{int(time.time())}.mp4"
                 st.session_state["t2v_video"] = video_bytes
                 st.session_state["t2v_name"] = fname
+                st.session_state["t2v_model_used"] = used_label
                 st.rerun()
             except Exception as exc:  # never crash the app — explain instead
                 st.error(friendly_error(exc))
@@ -416,6 +547,7 @@ with tab2:
         value="blurry, low quality, distorted faces, watermark, text",
     )
 
+    st.caption("⚡ Smart fallback ON: ye model busy/fail ho to app khud agla model try karegi.")
     if st.button("🚀 Animate Image", type="primary", use_container_width=True, key="i2v_go"):
         if not valid_token(token):
             st.error("🔑 Pehle sidebar mein apna **HF_TOKEN** paste karein (free token: "
@@ -425,30 +557,29 @@ with tab2:
         elif not motion.strip():
             st.error("✏️ Motion prompt likhein — tasveer mein kya harkat ho?")
         else:
-            try:
-                client = make_client(token.strip(), provider)
-                kwargs2: dict = {
-                    "model": i2v_model,
-                    "prompt": motion.strip(),
-                    "num_frames": frames,
-                    "num_inference_steps": steps,
-                    "guidance_scale": guidance,
-                }
-                if negative2.strip():
-                    kwargs2["negative_prompt"] = negative2.strip()
-                if seed is not None:
-                    kwargs2["seed"] = seed
+            client = make_client(token.strip(), provider)
+            kwargs2: dict = {
+                "prompt": motion.strip(),
+                "num_frames": frames,
+                "num_inference_steps": steps,
+                "guidance_scale": guidance,
+            }
+            if negative2.strip():
+                kwargs2["negative_prompt"] = negative2.strip()
+            if seed is not None:
+                kwargs2["seed"] = seed
 
-                image_bytes = uploaded.getvalue()
-                with st.spinner(
-                    "🎞️ Tasveer animate ho rahi hai… chand minute lag sakte hain. "
-                    "Page band na karein."
-                ):
-                    video_bytes = client.image_to_video(image_bytes, **kwargs2)
+            image_bytes = uploaded.getvalue()
+            status = st.status("🎞️ Starting animation…", expanded=True)
+            try:
+                video_bytes, used_label = generate_video_with_fallback(
+                    client, "i2v", status, model=i2v_model,
+                    _image_bytes=image_bytes, **kwargs2)
 
                 fname = f"i2v_{int(time.time())}.mp4"
                 st.session_state["i2v_video"] = video_bytes
                 st.session_state["i2v_name"] = fname
+                st.session_state["i2v_model_used"] = used_label
                 st.rerun()
             except Exception as exc:  # never crash the app — explain instead
                 st.error(friendly_error(exc))
