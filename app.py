@@ -171,17 +171,22 @@ def _friendly_space_error(exc: Exception) -> str:
     return f"⚠️ **Generation fail ho gayi:** {short}"
 
 
-def generate_with_fallback(kind: str, status, preferred: str | None, **params):
+def generate_with_fallback(kind: str, status, preferred: str | None = None,
+                           pin_space: str | None = None, **params):
     """Generate via public Spaces with automatic fallback.
 
     Tries the preferred Space first, then the rest of the chain.
+    If pin_space is set, ONLY that Space is used (for story-mode consistency).
     Each Space gets one retry on transient errors. Live queue progress
     is shown in the `status` (st.status) container.
-    Returns (video_bytes, space_label). Raises last error if all fail.
+    Returns (video_bytes, space_label, space_id). Raises last error if all fail.
     """
-    chain = T2V_CHAIN if kind == "t2v" else I2V_CHAIN
-    if preferred in chain:
-        chain = [preferred] + [s for s in chain if s != preferred]
+    if pin_space:
+        chain = [pin_space]
+    else:
+        chain = T2V_CHAIN if kind == "t2v" else I2V_CHAIN
+        if preferred in chain:
+            chain = [preferred] + [s for s in chain if s != preferred]
 
     last_exc: Exception | None = None
     for space_id in chain:
@@ -220,7 +225,7 @@ def generate_with_fallback(kind: str, status, preferred: str | None, **params):
                 video_bytes = _result_to_bytes(job.result())
                 status.update(label=f"✅ Video ready — via {label}",
                               state="complete")
-                return video_bytes, label
+                return video_bytes, label, space_id
             except Exception as exc:  # noqa: BLE001 — fallback below
                 last_exc = exc
                 low = str(exc).lower()
@@ -237,6 +242,81 @@ def generate_with_fallback(kind: str, status, preferred: str | None, **params):
     status.update(label="❌ Sab Spaces fail/busy", state="error")
     assert last_exc is not None
     raise last_exc
+
+
+def extract_last_frame(video_bytes: bytes) -> str:
+    """Save the last frame of an MP4 to a PNG file. Returns the PNG path."""
+    import imageio.v3 as iio
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as t:
+        t.write(video_bytes)
+        mp4_path = t.name
+    last = None
+    for frame in iio.imiter(mp4_path):
+        last = frame
+    if last is None:
+        raise RuntimeError("Could not read frames from clip")
+    png_path = mp4_path.replace(".mp4", "_lastframe.png")
+    iio.imwrite(png_path, last)
+    return png_path
+
+
+def stitch_clips(clips: list) -> bytes:
+    """Concatenate MP4 clips (same encoding) into one video. Returns bytes."""
+    import imageio_ffmpeg
+    import subprocess
+    import os
+    tmpdir = tempfile.mkdtemp()
+    paths = []
+    for i, b in enumerate(clips):
+        p = os.path.join(tmpdir, f"clip{i:02d}.mp4")
+        with open(p, "wb") as f:
+            f.write(b)
+        paths.append(p)
+    listfile = os.path.join(tmpdir, "list.txt")
+    with open(listfile, "w") as f:
+        for p in paths:
+            f.write(f"file '{p}'\n")
+    out = os.path.join(tmpdir, "story.mp4")
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    subprocess.run(
+        [ffmpeg, "-y", "-f", "concat", "-safe", "0",
+         "-i", listfile, "-c", "copy", out],
+        check=True, capture_output=True, timeout=300)
+    with open(out, "rb") as f:
+        return f.read()
+
+
+def generate_story(status, preferred: str | None, clip_prompts: list,
+                   **base_params):
+    """Multi-clip story: clip 1 via text-to-video, baqi clips image-to-video
+    mein pichli clip ke LAST FRAME se chain — taake sab ek hi video lagein.
+    Saari clips pehli successful Space par pin hoti hain (consistent encoding).
+    Returns (stitched_bytes, space_label, num_clips)."""
+    clips: list = []
+    space_id = None
+    label = None
+    total = len(clip_prompts)
+    for i, cp in enumerate(clip_prompts):
+        p = dict(base_params)
+        p["prompt"] = cp
+        if i == 0:
+            p["image_path"] = None
+            status.write(f"🎬 **Clip 1/{total}** — shuruat…")
+            vb, label, space_id = generate_with_fallback(
+                "t2v", status, preferred, **p)
+        else:
+            # Pichli clip ka aakhri frame = agli clip ki shuruat (link!)
+            p["image_path"] = extract_last_frame(clips[-1])
+            status.write(f"🎬 **Clip {i+1}/{total}** — pichli se jor raha hun…")
+            vb, label, _sid = generate_with_fallback(
+                "i2v", status, None, pin_space=space_id, **p)
+        clips.append(vb)
+    status.update(label="🔗 Clips ko ek video mein jor raha hun…",
+                  state="running")
+    final = stitch_clips(clips)
+    status.update(label=f"✅ {total} clips — ek lambi video ready (via {label})",
+                  state="complete")
+    return final, label, total
 
 
 # ----------------------------------------------------------------------------
@@ -387,7 +467,8 @@ def show_result(key_prefix: str, label: str) -> None:
     name = st.session_state.get(f"{key_prefix}_name", "video.mp4")
     if not data:
         return
-    st.success(f"✅ {label} ready!")
+    done_label = st.session_state.get(f"{key_prefix}_label_done", label)
+    st.success(f"✅ {done_label} ready!")
     space_used = st.session_state.get(f"{key_prefix}_space_used")
     if space_used:
         st.caption(f"🤖 Generated with: **{space_used}** (public free Space)")
@@ -416,15 +497,33 @@ with tab1:
         value="blurry, low quality, distorted faces, watermark, text",
     )
 
+    story_mode = st.checkbox(
+        "🎞️ Story mode — linked clips, ek lambi video (e.g. 30 sec)",
+        help="Har clip pichli clip ke aakhri frame se shuru hoti hai — "
+             "taake sab ek hi video ke parts lagein.",
+    )
+    num_clips = 4
+    story_lines = ""
+    if story_mode:
+        num_clips = st.slider("Kitne clips?", min_value=2, max_value=6, value=4,
+                              help="Har clip max ~8 sec. 4 clips ≈ 32 sec.")
+        st.caption(f"📏 Total: ~{num_clips * duration} seconds "
+                   f"({num_clips} clips × {duration}s)")
+        story_lines = st.text_area(
+            "Story prompts — har line ek clip (khali line = upar wala prompt repeat)",
+            height=110,
+            placeholder="Clip 1: plumber waves hello at camera\n"
+                        "Clip 2: plumber fixes the sink, water splashes\n"
+                        "Clip 3: plumber gives thumbs up, happy ending",
+        )
+
     if st.button("🚀 Generate Video", type="primary", use_container_width=True, key="t2v_go"):
         if not prompt.strip():
             st.error("✏️ Pehle koi prompt likhein — phir Generate dabayein.")
         else:
             status = st.status("🎥 Starting generation…", expanded=True)
             try:
-                video_bytes, used_label = generate_with_fallback(
-                    "t2v", status, preferred_space,
-                    prompt=prompt.strip(),
+                base = dict(
                     negative=negative.strip(),
                     image_path=None,
                     width=width, height=height,
@@ -432,10 +531,27 @@ with tab1:
                     seed=seed_param,
                     guidance=guidance,
                 )
-                fname = f"t2v_{int(time.time())}.mp4"
+                if story_mode:
+                    lines = [l.strip() for l in story_lines.split("\n")
+                             if l.strip()]
+                    clip_prompts = [
+                        lines[i] if i < len(lines) else prompt.strip()
+                        for i in range(num_clips)
+                    ]
+                    video_bytes, used_label, n_clips = generate_story(
+                        status, preferred_space, clip_prompts, **base)
+                    fname = f"story_{int(time.time())}.mp4"
+                    label_done = f"{n_clips}-clip story"
+                else:
+                    video_bytes, used_label, _sid = generate_with_fallback(
+                        "t2v", status, preferred_space,
+                        prompt=prompt.strip(), **base)
+                    fname = f"t2v_{int(time.time())}.mp4"
+                    label_done = "Video"
                 st.session_state["t2v_video"] = video_bytes
                 st.session_state["t2v_name"] = fname
                 st.session_state["t2v_space_used"] = used_label
+                st.session_state["t2v_label_done"] = label_done
                 st.rerun()
             except Exception as exc:  # never crash the app — explain instead
                 st.error(_friendly_space_error(exc))
@@ -500,7 +616,7 @@ with tab2:
                 tmp_path = tmp.name
             status = st.status("🎞️ Starting animation…", expanded=True)
             try:
-                video_bytes, used_label = generate_with_fallback(
+                video_bytes, used_label, _space_id = generate_with_fallback(
                     "i2v", status, preferred_space,
                     prompt=motion.strip(),
                     negative=negative2.strip(),
