@@ -109,7 +109,13 @@ SPACE_ADAPTERS = {
 }
 
 T2V_CHAIN = [SPACE_LTX, SPACE_COG5, SPACE_COG2]
-I2V_CHAIN = [SPACE_LTX, SPACE_COG5, SPACE_COG2]
+# I2V reality (verified 2026-10-13): LTX /image_to_video raises a server-side
+# exception; CogVideoX-2B /generate has NO image param at all (T2V only).
+# Only CogVideoX-5B does working image-to-video.
+I2V_CHAIN = [SPACE_COG5]
+# Story mode chains clips via image-to-video, so it must stay on an
+# I2V-capable Space for every clip.
+STORY_CHAIN = [SPACE_COG5]
 
 _client_cache: dict = {}
 
@@ -229,6 +235,14 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
             except Exception as exc:  # noqa: BLE001 — fallback below
                 last_exc = exc
                 low = str(exc).lower()
+                # Stale API info in cached client (Space updated mid-session):
+                # drop the client so the next attempt re-fetches the API.
+                if "not a valid key-word argument" in low:
+                    _client_cache.pop(space_id, None)
+                    if attempt == 1:
+                        status.write(f"🔄 {label} ka API refresh kar raha hun…")
+                        time.sleep(3)
+                        continue
                 transient = any(k in low for k in (
                     "timeout", "timed out", "queue", "busy", "429", "503",
                     "connection", "temporarily"))
@@ -290,26 +304,26 @@ def generate_story(status, preferred: str | None, clip_prompts: list,
                    **base_params):
     """Multi-clip story: clip 1 via text-to-video, baqi clips image-to-video
     mein pichli clip ke LAST FRAME se chain — taake sab ek hi video lagein.
-    Saari clips pehli successful Space par pin hoti hain (consistent encoding).
-    Returns (stitched_bytes, space_label, num_clips)."""
+    Saari clips CogVideoX-5B par pin hoti hain (wahid Space jis ka I2V
+    waqai kaam karta hai). Returns (stitched_bytes, space_label, num_clips)."""
     clips: list = []
-    space_id = None
     label = None
     total = len(clip_prompts)
+    story_space = STORY_CHAIN[0]  # CogVideoX-5B — only working I2V
     for i, cp in enumerate(clip_prompts):
         p = dict(base_params)
         p["prompt"] = cp
         if i == 0:
             p["image_path"] = None
-            status.write(f"🎬 **Clip 1/{total}** — shuruat…")
-            vb, label, space_id = generate_with_fallback(
-                "t2v", status, preferred, **p)
+            status.write(f"🎬 **Clip 1/{total}** — shuruat (CogVideoX-5B)…")
+            vb, label, _sid = generate_with_fallback(
+                "t2v", status, None, pin_space=story_space, **p)
         else:
             # Pichli clip ka aakhri frame = agli clip ki shuruat (link!)
             p["image_path"] = extract_last_frame(clips[-1])
             status.write(f"🎬 **Clip {i+1}/{total}** — pichli se jor raha hun…")
             vb, label, _sid = generate_with_fallback(
-                "i2v", status, None, pin_space=space_id, **p)
+                "i2v", status, None, pin_space=story_space, **p)
         clips.append(vb)
     status.update(label="🔗 Clips ko ek video mein jor raha hun…",
                   state="running")
@@ -500,7 +514,9 @@ with tab1:
     story_mode = st.checkbox(
         "🎞️ Story mode — linked clips, ek lambi video (e.g. 30 sec)",
         help="Har clip pichli clip ke aakhri frame se shuru hoti hai — "
-             "taake sab ek hi video ke parts lagein.",
+             "taake sab ek hi video ke parts lagein. "
+             "Story mode CogVideoX-5B use karta hai (wahid Space jis ka "
+             "image-to-video chaining kaam karta hai) — thora slow ho sakta hai.",
     )
     num_clips = 4
     story_lines = ""
