@@ -698,9 +698,24 @@ def show_result(key_prefix: str, label: str) -> None:
 with tab1:
     st.subheader("Describe it → get an MP4")
     st.caption("⚡ Auto-fallback ON: ek Space busy ho to app khud agla try karegi. Koi key nahi chahiye.")
+    # Viral prompt presets
+    with st.expander("🔥 Viral Prompt Presets — ek click mein ready prompt"):
+        VIRAL_PRESETS = {
+            "🐍 Giant Snake (viral wildlife)": "A gigantic anaconda emerging from a misty jungle river at dawn, water splashing dramatically, cinematic wildlife documentary style, hyper-realistic, 8k detail",
+            "🦁 Giant Lion": "A colossal lion walking through savanna grass at golden hour, dust particles in air, epic cinematic scale, photorealistic wildlife film",
+            "🌊 Ocean Monster": "A massive sea creature surfacing from deep ocean waves during a storm, dramatic lightning, cinematic disaster movie style",
+            "🔧 Funny Plumber": "A cheerful Pixar-style 3D cartoon plumber in blue overalls slips on a banana peel in a flooded bathroom, comedic timing, vibrant colors",
+            "🏠 Garage Comedy": "A funny 3D cartoon garage door repairman gets chased by a runaway garage door spring, slapstick comedy, bright workshop",
+            "🌋 Volcano Eruption": "A dramatic volcano erupting at night, lava fountains and ash clouds, cinematic nature documentary, hyper-detailed",
+        }
+        cols = st.columns(2)
+        for i, (label, ptext) in enumerate(VIRAL_PRESETS.items()):
+            if cols[i % 2].button(label, key=f"viral_{i}", use_container_width=True):
+                st.session_state["_prompt_box"] = ptext
+                st.rerun()
     prompt = st.text_area(
         "Prompt",
-        height=120,
+        height=120, key="_prompt_box",
         placeholder="A cheerful plumber waves hello at the camera, bright workshop, "
                     "expressive face, medium close-up",
     )
