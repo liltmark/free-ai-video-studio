@@ -583,7 +583,7 @@ if not st.session_state.ad_watched:
             st.rerun()
     st.stop()
 
-tab1, tab2, tab3 = st.tabs(["🎬 Text to Video", "🖼️ Image to Video", "📋 Surveys"])
+tab1, tab2, tab3, tab4 = st.tabs(["🎬 Text to Video", "🖼️ Image to Video", "📋 Surveys", "🎞️ Pexels Stock"])
 
 
 def show_result(key_prefix: str, label: str) -> None:
@@ -817,6 +817,113 @@ with tab3:
             if _s.get("desc"):
                 st.caption(_s["desc"])
             st.link_button("▶ Survey shuru karen", _s["url"])
+
+
+# ---------------- Tab 4: Pexels Stock Videos ----------------
+def _pexels_search(query: str, api_key: str, per_page: int = 12):
+    """Search Pexels videos. Returns list of dicts."""
+    import json as _json
+    import urllib.parse as _up
+    q = _up.quote(query)
+    url = (f"https://api.pexels.com/videos/search?query={q}"
+           f"&per_page={per_page}&orientation=portrait")
+    req = urllib.request.Request(url, headers={"Authorization": api_key})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = _json.loads(resp.read().decode())
+    out = []
+    for v in data.get("videos", []):
+        # best mp4 file: prefer HD-ish width, portrait
+        best = None
+        for f in v.get("video_files", []):
+            if f.get("file_type") != "video/mp4":
+                continue
+            if best is None or (f.get("width", 0) > best.get("width", 0)
+                                and f.get("width", 0) <= 1280):
+                best = f
+        if not best:
+            continue
+        out.append({
+            "id": v.get("id"),
+            "duration": v.get("duration"),
+            "url": v.get("url"),
+            "preview": v.get("image"),
+            "file": best["link"],
+            "width": best.get("width"),
+            "height": best.get("height"),
+        })
+    return out
+
+
+with tab4:
+    st.subheader("🎞️ Pexels Stock Videos")
+    st.caption("Free stock footage — **koi quota nahi!** Plumbing, electrical, HVAC waghera ke liye.")
+    pexels_key = st.text_input(
+        "Pexels API Key (free: pexels.com/api)",
+        type="password",
+        key="pexels_key",
+        placeholder="Paste free API key",
+        help="pexels.com/api par free account bana kar key lein.",
+    )
+    # Quick preset buttons for his 7 home services
+    presets = {
+        "🔧 Plumbing": "plumber plumbing repair",
+        "⚡ Electrical": "electrician electrical work",
+        "🚪 Garage Door": "garage door repair",
+        "🏠 Roofing": "roofing roof repair",
+        "🔌 Appliance": "appliance repair technician",
+        "❄️ HVAC": "hvac air conditioner technician",
+        "🎨 Painting": "house painting painter",
+    }
+    cols = st.columns(4)
+    for i, (label, q) in enumerate(presets.items()):
+        if cols[i % 4].button(label, use_container_width=True):
+            st.session_state["pexels_query"] = q
+    query = st.text_input(
+        "Search videos",
+        value=st.session_state.get("pexels_query", "plumber"),
+        key="pexels_search_box",
+    )
+    if st.button("🔍 Search", type="primary") and query:
+        if not pexels_key:
+            st.warning("⚠️ Pehle Pexels API key dalein (free: pexels.com/api)")
+        else:
+            with st.spinner("Searching Pexels…"):
+                try:
+                    results = _pexels_search(query, pexels_key)
+                    st.session_state["pexels_results"] = results
+                except Exception as e:
+                    st.error(f"Search fail: {e}")
+    for r in st.session_state.get("pexels_results", []):
+        with st.container(border=True):
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                if r["preview"]:
+                    st.image(r["preview"], use_container_width=True)
+            with c2:
+                st.write(f"⏱️ {r['duration']}s • 📐 {r['width']}×{r['height']}")
+                st.link_button("▶ Pexels par dekhein", r["url"])
+                # Download via server
+                if st.button(f"⬇️ Download", key=f"pexdl_{r['id']}"):
+                    with st.spinner("Downloading…"):
+                        try:
+                            req = urllib.request.Request(
+                                r["file"],
+                                headers={"User-Agent": "Mozilla/5.0"})
+                            with urllib.request.urlopen(req, timeout=120) as resp:
+                                data = resp.read()
+                            st.session_state[f"pexvid_{r['id']}"] = data
+                            st.success(f"✅ Downloaded ({len(data)//1024} KB)")
+                        except Exception as e:
+                            st.error(f"Download fail: {e}")
+                data = st.session_state.get(f"pexvid_{r['id']}")
+                if data:
+                    st.download_button(
+                        "💾 Save MP4",
+                        data=data,
+                        file_name=f"pexels-{r['id']}.mp4",
+                        mime="video/mp4",
+                        key=f"pexsave_{r['id']}",
+                    )
 
 
 st.divider()
