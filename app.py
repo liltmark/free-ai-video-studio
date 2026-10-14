@@ -60,7 +60,16 @@ AD_WAIT_SECONDS = 10
 # Survey links — send new links any time and Muse will add them here:
 # {"title": "...", "url": "https://...", "desc": "..."}
 SURVEY_LINKS = [
-    # {"title": "Sample Survey", "url": "https://example.com", "desc": "Short description"},
+    {"title": "Get $500 to Spend at Walmart!", "url": "https://singingfiles.com/show.php?l=0&u=2558676&id=74764", "desc": "Sweepstakes survey — win $500 for Walmart (iOS, USA). Payout $2.48/lead."},
+    {"title": "Get $1000 on Your CashApp!", "url": "https://singingfiles.com/show.php?l=0&u=2558676&id=75222", "desc": "Sweepstakes survey — win $1000 on CashApp (iOS, USA). Payout $2.99/lead."},
+    {"title": "Get a $100 Nike Gift Card!", "url": "https://singingfiles.com/show.php?l=0&u=2558676&id=75217", "desc": "$100 Nike gift card signup survey (Desktop, USA). Payout $2.99/lead."},
+    {"title": "Get $100 to Spend at Ulta!", "url": "https://singingfiles.com/show.php?l=0&u=2558676&id=74436", "desc": "$100 Ulta signup survey (Desktop, USA). Payout $3.08/lead."},
+    {"title": "Get $1000 CashApp Gift Card!", "url": "https://singingfiles.com/show.php?l=0&u=2558676&id=75220", "desc": "$1000 CashApp gift card survey (Desktop, USA). Payout $2.99/lead."},
+    {"title": "Get $1000 to Spend at Walmart!", "url": "https://singingfiles.com/show.php?l=0&u=2558676&id=75095", "desc": "Sweepstakes — win $1000 for Walmart (Android, USA). Payout $0.89/lead."},
+    {"title": "Get $100 at Jersey Mike's!", "url": "https://singingfiles.com/show.php?l=0&u=2558676&id=75134", "desc": "$100 Jersey Mike's signup survey (Desktop, USA). Payout $2.73/lead."},
+    {"title": "Get $100 Ulta Gift Card Now!", "url": "https://singingfiles.com/show.php?l=0&u=2558676&id=74437", "desc": "$100 Ulta gift card sweepstakes (Android, USA). Payout $3.08/lead."},
+    {"title": "Get the Best Samples Now!", "url": "https://singingfiles.com/show.php?l=0&u=2558676&id=75092", "desc": "Free product samples signup (Android, USA). Payout $1.02/lead."},
+    {"title": "Register for ShopBack Now!", "url": "https://singingfiles.com/show.php?l=0&u=2558676&id=75420", "desc": "Cashback rewards signup (Desktop, USA). Payout $0.28/lead."},
 ]
 
 # Pixabay free API key (stock videos — no quota). Get a free key at pixabay.com/api/docs
