@@ -122,21 +122,14 @@ def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
                 image_path, width: int, height: int, duration: float,
                 seed: int, guidance: float, drop_params=frozenset()):
     """Submit to CogVideoX Space (/generate handles both t2v and i2v)."""
-    seed_val = random.randint(0, 2 ** 31 - 1) if seed == -1 else seed
     kwargs = dict(
         prompt=prompt,
-        video_strength=0.5,
-        seed_value=seed_val,
-        scale_status=False,
-        rife_status=False,
         api_name="/generate",
     )
-    # CogVideoX-2B /generate has NO image param at all (T2V only) — passing
-    # image_input=None raises "not a valid key-word argument". Only send it
-    # when we actually have an image (I2V on 5B).
+    # I2V only: 5B accepts an image; 2B has NO image param (T2V only).
     if image_path:
         kwargs["image_input"] = image_path
-    # Drop any params the engine previously rejected (self-healing).
+    # Drop any params the engine previously rejected (self-healing backstop).
     for p in drop_params:
         kwargs.pop(p, None)
     return client.submit(**kwargs)
@@ -250,6 +243,7 @@ def _result_to_bytes(result) -> bytes:
 def _clean_brand(text: str) -> str:
     """Strip third-party branding from user-facing error text."""
     import re as _re
+    text = _re.sub(r"(?i)the gradio app", "the engine", text)
     text = _re.sub(r"(?i)gradio", "the engine", text)
     text = _re.sub(r"(?i)hugging face", "the engine", text)
     text = _re.sub(r"(?i)streamlit", "the app", text)
@@ -771,7 +765,7 @@ st.markdown(
 PAGE_T2V = "🎬 Text to Video"
 PAGE_I2V = "🖼️ Image to Video"
 PAGE_STOCK = "🎞️ Stock Videos"
-PAGE_COLAB = "📓 Colab GPU"
+PAGE_COLAB = "📓 Lip-Sync Studio"
 PAGE_VOICE = "🎙️ Voiceover Studio"
 PAGE_SURVEYS = "📋 Surveys"
 
@@ -834,9 +828,9 @@ with st.sidebar:
             st.write(
                 "• **Completely free — no tokens or API keys required.**\n"
                 "• Videos are generated on our **high-performance AI servers**.\n"
-                "• **Queues:** free Spaces get busy — at peak times it can take 10–30 min. "
-                "The app automatically tries the next Space.\n"
-                "• **Hosting:** free (Streamlit Community Cloud)."
+                "• **Queues:** free servers get busy — at peak times it can take 10–30 min. "
+                "The app automatically tries the next engine.\n"
+                "• **Hosting:** 100% free cloud."
             )
 
     st.divider()
