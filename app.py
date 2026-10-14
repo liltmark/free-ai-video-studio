@@ -123,9 +123,8 @@ def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
                 seed: int, guidance: float):
     """Submit to CogVideoX Space (/generate handles both t2v and i2v)."""
     seed_val = random.randint(0, 2 ** 31 - 1) if seed == -1 else seed
-    return client.submit(
+    kwargs = dict(
         prompt=prompt,
-        image_input=image_path,               # None → text-to-video
         video_input=None,
         video_strength=0.5,
         seed_value=seed_val,
@@ -133,6 +132,12 @@ def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
         rife_status=False,
         api_name="/generate",
     )
+    # CogVideoX-2B /generate has NO image param at all (T2V only) — passing
+    # image_input=None raises "not a valid key-word argument". Only send it
+    # when we actually have an image (I2V on 5B).
+    if image_path:
+        kwargs["image_input"] = image_path
+    return client.submit(**kwargs)
 
 
 def _wan_submit(client: Client, kind: str, prompt: str, negative: str,
