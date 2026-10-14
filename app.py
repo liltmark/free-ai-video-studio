@@ -97,18 +97,25 @@ def _ltx_submit(client: Client, kind: str, prompt: str, negative: str,
                 seed: int, guidance: float, drop_params=frozenset()):
     """Submit to LTX-Video Space. kind: 't2v' or 'i2v'."""
     rnd = (seed == -1)
-    frames = max(9, min(257, int(duration * 24)))
+    # Free-tier clamp: ZeroGPU rejects GPU estimates over its free max.
+    # Keep the request small: <=512px on the long edge, <=2s duration.
+    # (User picks bigger in the UI; we shrink it so it actually runs free.)
+    scale = min(1.0, 512.0 / max(width, height))
+    w = int(width * scale) // 8 * 8
+    h = int(height * scale) // 8 * 8
+    dur = min(float(duration), 2.0)
+    frames = max(9, min(257, int(dur * 24)))
     api = "/text_to_video" if kind == "t2v" else "/image_to_video"
     mode = "text-to-video" if kind == "t2v" else "image-to-video"
-    return client.submit(
+    kwargs = dict(
         prompt=prompt,
         negative_prompt=negative,
         input_image_filepath=image_path,      # None for text-to-video
         input_video_filepath=None,
-        height_ui=height,
-        width_ui=width,
+        height_ui=h,
+        width_ui=w,
         mode=mode,
-        duration_ui=duration,
+        duration_ui=dur,
         ui_frames_to_use=frames,
         seed_ui=0 if rnd else seed,
         randomize_seed=rnd,
@@ -116,6 +123,9 @@ def _ltx_submit(client: Client, kind: str, prompt: str, negative: str,
         improve_texture_flag=False,
         api_name=api,
     )
+    for p in drop_params:
+        kwargs.pop(p, None)
+    return client.submit(**kwargs)
 
 
 def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
