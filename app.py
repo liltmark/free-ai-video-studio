@@ -35,7 +35,24 @@ from gradio_client.utils import Status
 # ----------------------------------------------------------------------------
 # Paste your ad network (Adsterra/PropellerAds etc.) <script> or <iframe> code
 # here. While empty, a placeholder appears in the ad slot.
-AD_HTML = ""
+AD_HTML = """
+<!-- Adsterra Social Bar (high CPM) -->
+<script data-cfasync="false" src="https://bauval.org/14/06cfef510844ff8afa72574c902ab415"></script>
+<!-- Adsterra Banner 300x250 -->
+<script>
+  atOptions = {
+    'key' : '644d29a9d10373fa5f3a39e674d333cb',
+    'format' : 'iframe',
+    'height' : 250,
+    'width' : 300,
+    'params' : {}
+  };
+</script>
+<script src="https://bauval.org/22/644d29a9d10373fa5f3a39e674d333cb"></script>
+<!-- Adsterra Native Banner -->
+<script async="async" data-cfasync="false" src="https://bauval.org/21/36bf4270f19cadf49600f4e0f50abe1c"></script>
+<div id="container-36bf4270f19cadf49600f4e0f50abe1c"></div>
+"""
 
 # Seconds the visitor must wait on the ad before the studio unlocks:
 AD_WAIT_SECONDS = 10
