@@ -94,7 +94,7 @@ JOB_TIMEOUT = 1800  # seconds (30 min) — public queues can be slow at peak tim
 
 def _ltx_submit(client: Client, kind: str, prompt: str, negative: str,
                 image_path, width: int, height: int, duration: float,
-                seed: int, guidance: float):
+                seed: int, guidance: float, drop_params=frozenset()):
     """Submit to LTX-Video Space. kind: 't2v' or 'i2v'."""
     rnd = (seed == -1)
     frames = max(9, min(257, int(duration * 24)))
@@ -120,12 +120,11 @@ def _ltx_submit(client: Client, kind: str, prompt: str, negative: str,
 
 def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
                 image_path, width: int, height: int, duration: float,
-                seed: int, guidance: float):
+                seed: int, guidance: float, drop_params=frozenset()):
     """Submit to CogVideoX Space (/generate handles both t2v and i2v)."""
     seed_val = random.randint(0, 2 ** 31 - 1) if seed == -1 else seed
     kwargs = dict(
         prompt=prompt,
-        video_input=None,
         video_strength=0.5,
         seed_value=seed_val,
         scale_status=False,
@@ -137,24 +136,15 @@ def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
     # when we actually have an image (I2V on 5B).
     if image_path:
         kwargs["image_input"] = image_path
-    # Self-healing: Spaces change their API without notice. If the Space
-    # rejects a parameter name, drop it and retry (max 4 drops).
-    import re
-    for _ in range(5):
-        try:
-            return client.submit(**kwargs)
-        except Exception as e:
-            m = re.search(r"Parameter (\w+) is not a valid key-word argument",
-                          str(e))
-            if not m or m.group(1) not in kwargs:
-                raise
-            kwargs.pop(m.group(1))
+    # Drop any params the engine previously rejected (self-healing).
+    for p in drop_params:
+        kwargs.pop(p, None)
     return client.submit(**kwargs)
 
 
 def _wan_submit(client: Client, kind: str, prompt: str, negative: str,
                 image_path, width: int, height: int, duration: float,
-                seed: int, guidance: float):
+                seed: int, guidance: float, drop_params=frozenset()):
     """Submit to Wan 2.2 14B I2V Space. I2V ONLY (no T2V endpoint)."""
     from gradio_client.utils import handle_file
     if kind != "i2v" or not image_path:
@@ -257,6 +247,18 @@ def _result_to_bytes(result) -> bytes:
         return f.read()
 
 
+def _clean_brand(text: str) -> str:
+    """Strip third-party branding from user-facing error text."""
+    import re as _re
+    text = _re.sub(r"(?i)gradio", "the engine", text)
+    text = _re.sub(r"(?i)hugging face", "the engine", text)
+    text = _re.sub(r"(?i)streamlit", "the app", text)
+    text = _re.sub(r"Lightricks/[\\w-]+", "the engine", text)
+    text = _re.sub(r"zai-org/[\\w-]+", "the engine", text)
+    text = _re.sub(r"Upsampler/[\\w-]+", "the engine", text)
+    return text
+
+
 def _friendly_space_error(exc: Exception) -> str:
     low = str(exc).lower()
     if "queue_full" in low or "queue is full" in low:
@@ -265,7 +267,7 @@ def _friendly_space_error(exc: Exception) -> str:
         return ("⏳ **Request timed out.** Please try again — the app will automatically try the next engine.")
     if "connection" in low or "unreachable" in low or "failed to connect" in low:
         return ("🔌 **Connection issue.** Please try again in a moment.")
-    short = str(exc).strip()[:350]
+    short = _clean_brand(str(exc).strip()[:350])
     return f"⚠️ **Generation failed:** {short}"
 
 
@@ -290,11 +292,15 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
     for space_id in chain:
         label = SPACE_ADAPTERS[space_id]["label"]
         submit_fn = SPACE_ADAPTERS[space_id]["fn"]
-        for attempt in (1, 2):
+        drop_params = set()  # params this engine rejected -> skip on retry
+        for attempt in (1, 2, 3, 4, 5, 6):
             try:
                 status.update(label=f"🎥 Connecting to {label}…", state="running")
                 client = get_client(space_id)
-                job = submit_fn(client, kind, **params)
+                call_params = dict(params)
+                if drop_params:
+                    call_params["drop_params"] = frozenset(drop_params)
+                job = submit_fn(client, kind, **call_params)
                 start = time.time()
                 last_qpos = None
                 last_beat = 0.0
@@ -347,14 +353,17 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                     _client_cache.pop(space_id, None)
                     status.write(f"⚠️ {label} unreachable — trying the next engine…")
                     break  # → next Space
-                # Stale API info in cached client (Space updated mid-session):
-                # drop the client so the next attempt re-fetches the API.
-                if "not a valid key-word argument" in low:
+                # Engine rejected a parameter name (API changed). Drop the
+                # cached client, remember the bad param, and retry the SAME
+                # engine without it — up to 4 dropped params.
+                import re as _re
+                _m = _re.search(r"parameter (\w+) is not a valid key-word argument", low)
+                if _m and len(drop_params) < 4:
                     _client_cache.pop(space_id, None)
-                    if attempt == 1:
-                        status.write(f"🔄 Refreshing {label}…")
-                        time.sleep(3)
-                        continue
+                    drop_params.add(_m.group(1))
+                    status.write(f"🔄 Adjusting {label}…")
+                    time.sleep(2)
+                    continue
                 transient = any(k in low for k in (
                     "timeout", "timed out", "queue", "busy", "429", "503",
                     "connection", "temporarily"))
