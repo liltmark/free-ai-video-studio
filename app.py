@@ -534,64 +534,103 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    /* Premium theme */
+    .stApp { background: #0a0a0f; }
+    section[data-testid="stSidebar"] { background: #111118; border-right: 1px solid #23232e; }
     .hero {
-        background: linear-gradient(135deg, #6d28d9 0%, #db2777 60%, #f59e0b 100%);
+        background: linear-gradient(135deg, #a78bfa 0%, #f472b6 50%, #fbbf24 100%);
         -webkit-background-clip: text;
         background-clip: text;
         color: transparent;
-        font-size: 2.4rem;
-        font-weight: 800;
+        font-size: 2.8rem;
+        font-weight: 900;
+        letter-spacing: -0.02em;
         margin-bottom: 0;
+        text-shadow: 0 0 40px rgba(167,139,250,0.3);
     }
     .ceo {
-        color: #9ca3af;
+        color: #c4b5fd;
         font-size: 0.95rem;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        margin-top: 0.25rem;
-        margin-bottom: 0.35rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-top: 0.4rem;
+        margin-bottom: 0.4rem;
     }
-    .sub { color: #9ca3af; margin-top: 0.2rem; margin-bottom: 1rem; }
-    .stButton > button[kind="primary"] {
+    .ceo-badge {
+        display: inline-block;
         background: linear-gradient(135deg, #6d28d9, #db2777);
+        color: white;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        padding: 0.35rem 1rem;
+        border-radius: 20px;
+        margin-bottom: 0.8rem;
+        box-shadow: 0 4px 15px rgba(109,40,217,0.4);
+    }
+    .sub { color: #a1a1aa; margin-top: 0.3rem; margin-bottom: 1.2rem; font-size: 1.05rem; }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #7c3aed, #db2777);
         border: none;
         font-weight: 700;
+        border-radius: 12px;
+        padding: 0.6rem 1.5rem;
+        box-shadow: 0 4px 20px rgba(124,58,237,0.4);
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .stButton > button[kind="primary"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 25px rgba(124,58,237,0.6);
+    }
+    .stButton > button:not([kind="primary"]) {
+        border-radius: 10px;
+        border: 1px solid #3f3f46;
     }
     .tip {
-        background: rgba(109, 40, 217, 0.12);
-        border: 1px solid rgba(109, 40, 217, 0.35);
-        border-radius: 10px;
-        padding: 0.7rem 1rem;
-        margin: 0.6rem 0;
+        background: linear-gradient(135deg, rgba(109,40,217,0.15), rgba(219,39,119,0.08));
+        border: 1px solid rgba(139,92,246,0.3);
+        border-radius: 14px;
+        padding: 0.9rem 1.2rem;
+        margin: 0.8rem 0;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
     }
     .side-logo {
-        font-size: 1.35rem;
-        font-weight: 800;
-        margin-bottom: 0;
-        background: linear-gradient(135deg, #6d28d9 0%, #db2777 100%);
+        font-size: 1.5rem;
+        font-weight: 900;
+        margin-bottom: 0.2rem;
+        background: linear-gradient(135deg, #a78bfa 0%, #f472b6 100%);
         -webkit-background-clip: text;
         background-clip: text;
         color: transparent;
     }
     .footer {
         text-align: center;
-        color: #9ca3af;
+        color: #71717a;
         font-size: 0.85rem;
-        margin-top: 0.3rem;
+        margin-top: 0.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid #23232e;
     }
     .ceo-side {
         font-size: 0.82rem;
-        color: #9ca3af;
+        color: #a1a1aa;
         text-align: center;
-        line-height: 1.5;
+        line-height: 1.6;
     }
+    .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div {
+        border-radius: 10px;
+        border: 1px solid #3f3f46;
+    }
+    .stExpander { border-radius: 12px; border: 1px solid #27272a; }
+    h1, h2, h3 { letter-spacing: -0.01em; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 st.markdown('<p class="hero">🎬 Free AI Video Studio</p>', unsafe_allow_html=True)
-st.markdown('<p class="ceo">CEO: MUHAMMAD MUDASSIR YASEEN</p>', unsafe_allow_html=True)
+st.markdown('<span class="ceo-badge">👑 CEO: MUHAMMAD MUDASSIR YASEEN</span>', unsafe_allow_html=True)
 st.markdown(
     '<p class="sub">Text-to-Video &amp; Image-to-Video — 100% free, no API keys. '
     "Powered by Free AI Video Studio.</p>",
