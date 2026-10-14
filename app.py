@@ -12,6 +12,8 @@ Gradio Spaces via `gradio_client`.
 
 No GPU, no torch, no heavy downloads needed in the app: it is just a
 lightweight front-end, the video models run on the public Spaces.
+
+CEO: MUHAMMAD MUDASSIR YASEEN
 """
 
 from __future__ import annotations
@@ -29,22 +31,22 @@ from gradio_client.utils import Status
 
 
 # ----------------------------------------------------------------------------
-# OWNER SETTINGS — inko Muse tumhare kehne par update karega
+# OWNER SETTINGS — updated by Muse on the owner's request
 # ----------------------------------------------------------------------------
-# Apne ad network (Adsterra/PropellerAds waghera) ka <script> ya <iframe> code
-# yahan paste karo. Jab tak khaali hai, ad ki jagah placeholder nazar aayega.
+# Paste your ad network (Adsterra/PropellerAds etc.) <script> or <iframe> code
+# here. While empty, a placeholder appears in the ad slot.
 AD_HTML = ""
 
-# Tool khulne se pehle user ko kitne second ad dekhna lazmi hai:
+# Seconds the visitor must wait on the ad before the studio unlocks:
 AD_WAIT_SECONDS = 10
 
-# Survey links — naye links jab bhi bhejo, Muse yahan add kar dega:
+# Survey links — send new links any time and Muse will add them here:
 # {"title": "...", "url": "https://...", "desc": "..."}
 SURVEY_LINKS = [
-    # {"title": "Sample Survey", "url": "https://example.com", "desc": "Mukhtasar wazahat"},
+    # {"title": "Sample Survey", "url": "https://example.com", "desc": "Short description"},
 ]
 
-# Pixabay free API key (stock videos — no quota). Get free at pixabay.com/api/docs
+# Pixabay free API key (stock videos — no quota). Get a free key at pixabay.com/api/docs
 PIXABAY_API_KEY = "58029727-e3e5a7f4e4b4d5ab8caa6f484"
 
 
@@ -53,8 +55,8 @@ PIXABAY_API_KEY = "58029727-e3e5a7f4e4b4d5ab8caa6f484"
 # ----------------------------------------------------------------------------
 # Public Gradio Spaces (verified live via gradio_client)
 # ----------------------------------------------------------------------------
-# Har Space ke liye ek adapter function hai jo sahi endpoint + parameters
-# ke saath job submit karta hai. Koi API key / token nahi chahiye.
+# One adapter per Space submits jobs with the right endpoint + parameters.
+# No API key / token required.
 
 SPACE_LTX = "Lightricks/ltx-video-distilled"      # official LTX-Video demo
 SPACE_COG5 = "zai-org/CogVideoX-5B-Space"         # official CogVideoX 5B demo
@@ -113,7 +115,7 @@ def _wan_submit(client: Client, kind: str, prompt: str, negative: str,
     """Submit to Wan 2.2 14B I2V Space. I2V ONLY (no T2V endpoint)."""
     from gradio_client.utils import handle_file
     if kind != "i2v" or not image_path:
-        raise ValueError("Wan Space sirf image-to-video karta hai")
+        raise ValueError("Wan Space only supports image-to-video")
     # steps max 12, duration as requested
     return client.submit(
         input_image=handle_file(image_path),
@@ -191,16 +193,16 @@ def _result_to_bytes(result) -> bytes:
 def _friendly_space_error(exc: Exception) -> str:
     low = str(exc).lower()
     if "queue_full" in low or "queue is full" in low:
-        return ("⏳ **Sab Spaces busy hain.** Public free Spaces par rush hota hai — "
-                "kuch minute ruk kar dobara try karein.")
+        return ("⏳ **All Spaces are busy.** Public free Spaces get crowded — "
+                "please wait a few minutes and try again.")
     if "timeout" in low or "timed out" in low:
-        return ("⏳ **Request timeout.** Space ne jawab nahi diya (lambi queue). "
-                "Dobara try karein — app khud agla Space try karegi.")
+        return ("⏳ **Request timed out.** The Space didn't respond (long queue). "
+                "Try again — the app will automatically try the next Space.")
     if "connection" in low or "unreachable" in low or "failed to connect" in low:
-        return ("🔌 **Space se connect nahi ho saka.** Shayad wo Space down hai — "
-                "app ne agla Space try kiya hoga.")
+        return ("🔌 **Couldn't connect to the Space.** It may be down — "
+                "the app has likely already tried the next Space.")
     short = str(exc).strip()[:350]
-    return f"⚠️ **Generation fail ho gayi:** {short}"
+    return f"⚠️ **Generation failed:** {short}"
 
 
 def generate_with_fallback(kind: str, status, preferred: str | None = None,
@@ -237,7 +239,7 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                             job.cancel()
                         except Exception:
                             pass
-                        raise TimeoutError(f"{label}: 30 min se zyada lag gaya")
+                        raise TimeoutError(f"{label}: took longer than 30 minutes")
                     try:
                         stt = job.status()
                         code = stt.code if hasattr(stt, "code") else None
@@ -245,11 +247,11 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                         if code == Status.IN_QUEUE and qpos and qpos != last_qpos:
                             last_qpos = qpos
                             status.update(
-                                label=f"🎥 {label} — queue mein #{qpos}…",
+                                label=f"🎥 {label} — in queue #{qpos}…",
                                 state="running")
                         elif code == Status.PROCESSING:
                             status.update(
-                                label=f"🎥 {label} — video ban rahi hai…",
+                                label=f"🎥 {label} — generating your video…",
                                 state="running")
                     except Exception:
                         pass
@@ -266,20 +268,20 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                 if "not a valid key-word argument" in low:
                     _client_cache.pop(space_id, None)
                     if attempt == 1:
-                        status.write(f"🔄 {label} ka API refresh kar raha hun…")
+                        status.write(f"🔄 Refreshing {label} API…")
                         time.sleep(3)
                         continue
                 transient = any(k in low for k in (
                     "timeout", "timed out", "queue", "busy", "429", "503",
                     "connection", "temporarily"))
                 if transient and attempt == 1:
-                    status.write(f"⏳ {label} busy — dobara try kar raha hun…")
+                    status.write(f"⏳ {label} is busy — retrying…")
                     time.sleep(5)
                     continue
-                status.write(f"⚠️ {label} fail — agla Space try kar raha hun…")
+                status.write(f"⚠️ {label} failed — trying the next Space…")
                 break  # → next Space
 
-    status.update(label="❌ Sab Spaces fail/busy", state="error")
+    status.update(label="❌ All Spaces failed or are busy", state="error")
     assert last_exc is not None
     raise last_exc
 
@@ -356,7 +358,7 @@ def generate_voiceover(text: str, voice_id: str) -> bytes:
     except OSError:
         pass
     if not data:
-        raise RuntimeError("Voiceover khali aya — text check karein")
+        raise RuntimeError("Voiceover came back empty — please check your text")
     return data
 
 
@@ -416,10 +418,11 @@ def mux_voiceover(video_bytes: bytes, audio_bytes: bytes) -> bytes:
 
 def generate_story(status, preferred: str | None, clip_prompts: list,
                    **base_params):
-    """Multi-clip story: clip 1 via text-to-video, baqi clips image-to-video
-    mein pichli clip ke LAST FRAME se chain — taake sab ek hi video lagein.
-    I2V clips pehli successful I2V Space par pin hoti hain (Wan 2.2 14B
-    primary, CogVideoX-5B fallback). Returns (stitched_bytes, space_label, num_clips)."""
+    """Multi-clip story: clip 1 via text-to-video, remaining clips via
+    image-to-video chained from the previous clip's LAST FRAME — so it all
+    feels like one continuous video. I2V clips pin to the first successful
+    I2V Space (Wan 2.2 14B primary, CogVideoX-5B fallback).
+    Returns (stitched_bytes, space_label, num_clips)."""
     clips: list = []
     label = None
     total = len(clip_prompts)
@@ -429,400 +432,24 @@ def generate_story(status, preferred: str | None, clip_prompts: list,
         p["prompt"] = cp
         if i == 0:
             p["image_path"] = None
-            status.write(f"🎬 **Clip 1/{total}** — shuruat…")
+            status.write(f"🎬 **Clip 1/{total}** — starting…")
             vb, label, _sid = generate_with_fallback(
                 "t2v", status, preferred, **p)
         else:
-            # Pichli clip ka aakhri frame = agli clip ki shuruat (link!)
+            # Previous clip's last frame = next clip's first frame (the link!)
             p["image_path"] = extract_last_frame(clips[-1])
-            status.write(f"🎬 **Clip {i+1}/{total}** — pichli se jor raha hun…")
+            status.write(f"🎬 **Clip {i+1}/{total}** — linking to previous clip…")
             vb, label, i2v_space = generate_with_fallback(
                 "i2v", status, None, pin_space=i2v_space, **p)
         clips.append(vb)
-    status.update(label="🔗 Clips ko ek video mein jor raha hun…",
+    status.update(label="🔗 Stitching clips into one video…",
                   state="running")
     final = stitch_clips(clips)
-    status.update(label=f"✅ {total} clips — ek lambi video ready (via {label})",
+    status.update(label=f"✅ {total} clips — full video ready (via {label})",
                   state="complete")
     return final, label, total
 
 
-# ----------------------------------------------------------------------------
-# Page setup + styling
-# ----------------------------------------------------------------------------
-
-st.set_page_config(
-    page_title="🎬 Free AI Video Studio",
-    page_icon="🎬",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-st.markdown(
-    """
-    <style>
-    .hero {
-        background: linear-gradient(135deg, #6d28d9 0%, #db2777 60%, #f59e0b 100%);
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
-        font-size: 2.4rem;
-        font-weight: 800;
-        margin-bottom: 0;
-    }
-    .sub { color: #9ca3af; margin-top: 0.2rem; margin-bottom: 1rem; }
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #6d28d9, #db2777);
-        border: none;
-        font-weight: 700;
-    }
-    .tip {
-        background: rgba(109, 40, 217, 0.12);
-        border: 1px solid rgba(109, 40, 217, 0.35);
-        border-radius: 10px;
-        padding: 0.7rem 1rem;
-        margin: 0.6rem 0;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.markdown('<p class="hero">🎬 Free AI Video Studio</p>', unsafe_allow_html=True)
-st.markdown(
-    '<p class="sub">Text-to-Video &amp; Image-to-Video — 100% free, no API keys. '
-    "Powered by public Hugging Face Spaces (LTX-Video, CogVideoX).</p>",
-    unsafe_allow_html=True,
-)
-
-
-# ----------------------------------------------------------------------------
-# Sidebar — settings (NO token needed!)
-# ----------------------------------------------------------------------------
-
-RESOLUTIONS = {
-    "Portrait 720×1280 (Shorts)": (1280, 720),   # (width, height)
-    "Square 512×512": (512, 512),
-    "Landscape 1280×720": (1280, 720),
-}
-
-with st.sidebar:
-    st.header("⚙️ Settings")
-    st.success("🔓 **No API key needed!**\nYe tool public free Spaces use karta hai.")
-
-    space_options = ["Auto (recommended — sab try karega)"] + [
-        f"{SPACE_ADAPTERS[s]['label']} ({s})" for s in T2V_CHAIN
-    ]
-    space_choice = st.selectbox(
-        "Preferred Space",
-        space_options,
-        help="Auto par app khud best available Space chunti hai; "
-             "agar wo busy ho to agli par chali jati hai.",
-    )
-    preferred_space = None
-    if not space_choice.startswith("Auto"):
-        preferred_space = space_choice.rsplit("(", 1)[1].rstrip(")")
-
-    st.divider()
-    st.subheader("🎛️ Generation settings")
-    res_label = st.selectbox("Resolution", list(RESOLUTIONS.keys()), index=0)
-    width, height = RESOLUTIONS[res_label]
-    duration = st.slider(
-        "Duration (seconds)",
-        min_value=1, max_value=8, value=3, step=1,
-        help="Lambi video = zyada queue/wait time.",
-    )
-    guidance = st.slider(
-        "Guidance scale (prompt adherence)",
-        min_value=1.0, max_value=10.0, value=5.0, step=0.5,
-    )
-    seed_in = st.number_input(
-        "Seed (-1 = random)", min_value=-1, value=-1, step=1,
-    )
-    seed = None if seed_in == -1 else int(seed_in)
-    # -1 means random; adapters handle it
-    seed_param = -1 if seed is None else seed
-
-    st.divider()
-    with st.expander("💡 Free-tier reality check"):
-        st.write(
-            "• **Bilkul free — koi token/API key nahi chahiye.**\n"
-            "• Video **public Hugging Face Spaces** (LTX-Video, CogVideoX) par banti hai.\n"
-            "• **Queue:** free Spaces par rush hota hai — busy time mein 10–30 min "
-            "lag sakte hain. App khud agla Space try karti hai.\n"
-            "• **Space hosting:** free (Streamlit Community Cloud)."
-        )
-
-
-# ----------------------------------------------------------------------------
-# Ad gate — tool use karne se pehle ek ad dekhna lazmi
-# ----------------------------------------------------------------------------
-if "ad_watched" not in st.session_state:
-    st.session_state.ad_watched = False
-    st.session_state.gate_start = time.time()
-
-if not st.session_state.ad_watched:
-    st.subheader("📺 Pehle ek chhota sa ad dekh lein")
-    st.write(
-        "Ye tool **bilkul free** hai — ads hi isay free rakhte hain. "
-        f"Neeche ad hai; **{AD_WAIT_SECONDS} second** ruk kar Continue dabayein, "
-        "phir tool khul jayega."
-    )
-    _ad_html = AD_HTML.strip() or """
-        <div style="background:#1f2937;border:2px dashed #6b7280;border-radius:12px;height:250px;
-                    display:flex;align-items:center;justify-content:center;color:#9ca3af;
-                    font-family:sans-serif;font-size:18px;">📢 Ad yahan lagega</div>
-    """
-    try:
-        components.html(_ad_html, height=300, scrolling=True)
-    except Exception:
-        st.info("📢 Ad yahan lagega.")
-    if st.button("✅ Ad dekh liya — Tool kholo", type="primary", use_container_width=True):
-        _waited = time.time() - st.session_state.gate_start
-        if _waited < AD_WAIT_SECONDS:
-            st.warning(f"⏳ Thoda aur ruken — {int(AD_WAIT_SECONDS - _waited)} second baqi hain.")
-        else:
-            st.session_state.ad_watched = True
-            st.rerun()
-    st.stop()
-
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎬 Text to Video", "🖼️ Image to Video", "📋 Surveys", "🎞️ Pexels Stock", "📓 Colab GPU"])
-
-
-def show_result(key_prefix: str, label: str) -> None:
-    """Render the last generated video (persisted in session state) + download."""
-    data = st.session_state.get(f"{key_prefix}_video")
-    name = st.session_state.get(f"{key_prefix}_name", "video.mp4")
-    if not data:
-        return
-    done_label = st.session_state.get(f"{key_prefix}_label_done", label)
-    st.success(f"✅ {done_label} ready!")
-    space_used = st.session_state.get(f"{key_prefix}_space_used")
-    if space_used:
-        st.caption(f"🤖 Generated with: **{space_used}** (public free Space)")
-    st.video(data, format="video/mp4")
-    st.download_button(
-        "⬇️ Download MP4",
-        data=data,
-        file_name=name,
-        mime="video/mp4",
-        use_container_width=True,
-    )
-
-
-# ---------------- Tab 1: Text to Video ----------------
-with tab1:
-    st.subheader("Describe it → get an MP4")
-    st.caption("⚡ Auto-fallback ON: ek Space busy ho to app khud agla try karegi. Koi key nahi chahiye.")
-    prompt = st.text_area(
-        "Prompt",
-        height=120,
-        placeholder="A cheerful plumber waves hello at the camera, bright workshop, "
-                    "expressive face, medium close-up",
-    )
-    negative = st.text_input(
-        "Negative prompt (optional)",
-        value="blurry, low quality, distorted faces, watermark, text",
-    )
-
-    story_mode = st.checkbox(
-        "🎞️ Story mode — linked clips, ek lambi video (e.g. 30 sec)",
-        help="Har clip pichli clip ke aakhri frame se shuru hoti hai — "
-             "taake sab ek hi video ke parts lagein. "
-             "Story mode Wan 2.2 14B (I2V) use karta hai — thora slow ho sakta hai.",
-    )
-    num_clips = 4
-    story_lines = ""
-    if story_mode:
-        num_clips = st.slider("Kitne clips?", min_value=2, max_value=6, value=4,
-                              help="Har clip max ~8 sec. 4 clips ≈ 32 sec.")
-        st.caption(f"📏 Total: ~{num_clips * duration} seconds "
-                   f"({num_clips} clips × {duration}s)")
-        story_lines = st.text_area(
-            "Story prompts — har line ek clip (khali line = upar wala prompt repeat)",
-            height=110,
-            placeholder="Clip 1: plumber waves hello at camera\n"
-                        "Clip 2: plumber fixes the sink, water splashes\n"
-                        "Clip 3: plumber gives thumbs up, happy ending",
-        )
-
-    st.divider()
-    st.subheader("🎙️ Voiceover (optional)")
-    st.caption("Script likhein — video mein free AI voice add ho jayegi. Khali chhorein to silent video banegi.")
-    voice_script = st.text_area(
-        "Voiceover script",
-        height=100,
-        placeholder="Is your drain clogged? Call EasyFix Plumbing now — same day service, only $110!",
-    )
-    voice_label = st.selectbox(
-        "Voice",
-        list(VOICES.keys()),
-        index=0,
-    )
-
-    if st.button("🚀 Generate Video", type="primary", use_container_width=True, key="t2v_go"):
-        if not prompt.strip():
-            st.error("✏️ Pehle koi prompt likhein — phir Generate dabayein.")
-        else:
-            status = st.status("🎥 Starting generation…", expanded=True)
-            try:
-                base = dict(
-                    negative=negative.strip(),
-                    image_path=None,
-                    width=width, height=height,
-                    duration=float(duration),
-                    seed=seed_param,
-                    guidance=guidance,
-                )
-                if story_mode:
-                    lines = [l.strip() for l in story_lines.split("\n")
-                             if l.strip()]
-                    clip_prompts = [
-                        lines[i] if i < len(lines) else prompt.strip()
-                        for i in range(num_clips)
-                    ]
-                    video_bytes, used_label, n_clips = generate_story(
-                        status, preferred_space, clip_prompts, **base)
-                    fname = f"story_{int(time.time())}.mp4"
-                    label_done = f"{n_clips}-clip story"
-                else:
-                    video_bytes, used_label, _sid = generate_with_fallback(
-                        "t2v", status, preferred_space,
-                        prompt=prompt.strip(), **base)
-                    fname = f"t2v_{int(time.time())}.mp4"
-                    label_done = "Video"
-                # Voiceover (optional)
-                script = voice_script.strip()
-                if script:
-                    try:
-                        status.update(label="🎙️ Voiceover bana raha hun…",
-                                      state="running")
-                        voice_id = VOICES[voice_label]
-                        audio_bytes = generate_voiceover(script, voice_id)
-                        status.update(label="🔊 Voice video mein jor raha hun…",
-                                      state="running")
-                        video_bytes = mux_voiceover(video_bytes, audio_bytes)
-                        label_done += " + voiceover"
-                        fname = fname.replace(".mp4", "_voice.mp4")
-                    except Exception as ve:
-                        status.write(f"⚠️ Voiceover fail ({ve}) — silent video de raha hun.")
-                st.session_state["t2v_video"] = video_bytes
-                st.session_state["t2v_name"] = fname
-                st.session_state["t2v_space_used"] = used_label
-                st.session_state["t2v_label_done"] = label_done
-                st.rerun()
-            except Exception as exc:  # never crash the app — explain instead
-                st.error(_friendly_space_error(exc))
-                with st.expander("🔧 Technical details (for debugging)"):
-                    st.code("".join(traceback.format_exception(exc))[-3000:])
-
-    st.markdown(
-        '<div class="tip">💡 <b>Tip:</b> chhote, wazeh prompts behtar kaam karte hain. '
-        "Style/motion alag se likhein, e.g. <i>'slow cinematic pan, golden hour lighting'</i>.</div>",
-        unsafe_allow_html=True,
-    )
-    with st.expander("🎭 Character acting guide — characters se achi performance len"):
-        st.write(
-            "**3 usool:**\n"
-            "1. **Chehra + emotion likho** — e.g. `expressive face, smiling warmly`, "
-            "`determined eyes`\n"
-            "2. **Body language likho** — e.g. `natural hand gestures`, `walking confidently`\n"
-            "3. **Camera qareeb rakho** — e.g. `medium close-up shot` taake chehra clear aaye\n\n"
-            "**Example 1:**\n"
-            "`A cheerful plumber with a friendly expressive face, wearing blue overalls, "
-            "looks at the camera and gives a thumbs up with a big smile, natural hand motion, "
-            "medium close-up, bright workshop lighting`\n\n"
-            "**Example 2:**\n"
-            "`A brave firefighter woman with determined expressive eyes runs toward the camera "
-            "through light smoke, coat flowing naturally, cinematic slow motion, dramatic lighting`"
-        )
-    show_result("t2v", "Video")
-
-
-# ---------------- Tab 2: Image to Video ----------------
-with tab2:
-    st.subheader("Upload a photo → animate it")
-    st.caption("⚡ Auto-fallback ON: ek Space busy ho to app khud agla try karegi. Koi key nahi chahiye.")
-    uploaded = st.file_uploader(
-        "Photo upload karein (JPG / PNG)",
-        type=["jpg", "jpeg", "png", "webp"],
-    )
-    if uploaded is not None:
-        st.image(uploaded, caption="Input image", width=420)
-
-    motion = st.text_area(
-        "Motion prompt",
-        height=100,
-        placeholder="The camera slowly zooms in while the person smiles and waves, "
-                    "natural motion, cinematic",
-    )
-    negative2 = st.text_input(
-        "Negative prompt (optional) ",
-        value="blurry, low quality, distorted faces, watermark, text",
-    )
-
-    if st.button("🚀 Animate Image", type="primary", use_container_width=True, key="i2v_go"):
-        if uploaded is None:
-            st.error("🖼️ Pehle koi photo upload karein.")
-        elif not motion.strip():
-            st.error("✏️ Motion prompt likhein — tasveer mein kya harkat ho?")
-        else:
-            # gradio_client needs a real file path for image upload
-            with tempfile.NamedTemporaryFile(
-                    suffix=".png", delete=False) as tmp:
-                tmp.write(uploaded.getvalue())
-                tmp_path = tmp.name
-            status = st.status("🎞️ Starting animation…", expanded=True)
-            try:
-                video_bytes, used_label, _space_id = generate_with_fallback(
-                    "i2v", status, preferred_space,
-                    prompt=motion.strip(),
-                    negative=negative2.strip(),
-                    image_path=tmp_path,
-                    width=width, height=height,
-                    duration=float(duration),
-                    seed=seed_param,
-                    guidance=guidance,
-                )
-                fname = f"i2v_{int(time.time())}.mp4"
-                st.session_state["i2v_video"] = video_bytes
-                st.session_state["i2v_name"] = fname
-                st.session_state["i2v_space_used"] = used_label
-                st.rerun()
-            except Exception as exc:  # never crash the app — explain instead
-                st.error(_friendly_space_error(exc))
-                with st.expander("🔧 Technical details (for debugging)"):
-                    st.code("".join(traceback.format_exception(exc))[-3000:])
-
-
-    st.markdown(
-        '<div class="tip">💡 <b>Tip:</b> saaf, roshan tasveerain behtar animate hoti hain. '
-        "Behtreen <b>character acting</b> ke liye: character ki saaf photo upload karo + "
-        "motion prompt mein chehre ka emotion likho "
-        "(e.g. <i>'smiling warmly, expressive eyes'</i>).</div>",
-        unsafe_allow_html=True,
-    )
-    show_result("i2v", "Animated video")
-
-
-# ---------------- Tab 3: Surveys ----------------
-with tab3:
-    st.subheader("📋 Surveys")
-    st.write(
-        "Neeche diye gaye surveys mukammal karen — "
-        "naye surveys waqtan fawaqtan add hote rehte hain."
-    )
-    if not SURVEY_LINKS:
-        st.info("📝 Abhi koi survey active nahi hai — jald aa rahe hain!")
-    for _s in SURVEY_LINKS:
-        with st.container(border=True):
-            st.markdown(f"**{_s.get('title', 'Survey')}**")
-            if _s.get("desc"):
-                st.caption(_s["desc"])
-            st.link_button("▶ Survey shuru karen", _s["url"])
-
-
-# ---------------- Tab 4: Pexels Stock Videos ----------------
 def _pexels_search(query: str, api_key: str, per_page: int = 12):
     """Search Pexels videos. Returns list of dicts."""
     import json as _json
@@ -887,11 +514,443 @@ def _pixabay_search(query: str, api_key: str, per_page: int = 12):
     return out
 
 
-with tab4:
-    st.subheader("🎞️ Stock Videos (Pexels + Pixabay)")
-    st.caption("Free stock footage — **koi quota nahi!** Plumbing, electrical, HVAC waghera ke liye.")
+RESOLUTIONS = {
+    "Portrait 720×1280 (Shorts)": (1280, 720),   # (width, height)
+    "Square 512×512": (512, 512),
+    "Landscape 1280×720": (1280, 720),
+}
+
+# ----------------------------------------------------------------------------
+# Page setup + professional styling
+# ----------------------------------------------------------------------------
+
+st.set_page_config(
+    page_title="🎬 Free AI Video Studio",
+    page_icon="🎬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown(
+    """
+    <style>
+    .hero {
+        background: linear-gradient(135deg, #6d28d9 0%, #db2777 60%, #f59e0b 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        font-size: 2.4rem;
+        font-weight: 800;
+        margin-bottom: 0;
+    }
+    .ceo {
+        color: #9ca3af;
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        margin-top: 0.25rem;
+        margin-bottom: 0.35rem;
+    }
+    .sub { color: #9ca3af; margin-top: 0.2rem; margin-bottom: 1rem; }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #6d28d9, #db2777);
+        border: none;
+        font-weight: 700;
+    }
+    .tip {
+        background: rgba(109, 40, 217, 0.12);
+        border: 1px solid rgba(109, 40, 217, 0.35);
+        border-radius: 10px;
+        padding: 0.7rem 1rem;
+        margin: 0.6rem 0;
+    }
+    .side-logo {
+        font-size: 1.35rem;
+        font-weight: 800;
+        margin-bottom: 0;
+        background: linear-gradient(135deg, #6d28d9 0%, #db2777 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+    }
+    .footer {
+        text-align: center;
+        color: #9ca3af;
+        font-size: 0.85rem;
+        margin-top: 0.3rem;
+    }
+    .ceo-side {
+        font-size: 0.82rem;
+        color: #9ca3af;
+        text-align: center;
+        line-height: 1.5;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown('<p class="hero">🎬 Free AI Video Studio</p>', unsafe_allow_html=True)
+st.markdown('<p class="ceo">CEO: MUHAMMAD MUDASSIR YASEEN</p>', unsafe_allow_html=True)
+st.markdown(
+    '<p class="sub">Text-to-Video &amp; Image-to-Video — 100% free, no API keys. '
+    "Powered by public Hugging Face Spaces (LTX-Video, CogVideoX).</p>",
+    unsafe_allow_html=True,
+)
+
+
+# ----------------------------------------------------------------------------
+# Sidebar — CapCut/Kling-style navigation (all tools live here)
+# ----------------------------------------------------------------------------
+
+PAGE_T2V = "🎬 Text to Video"
+PAGE_I2V = "🖼️ Image to Video"
+PAGE_STOCK = "🎞️ Stock Videos"
+PAGE_COLAB = "📓 Colab GPU"
+PAGE_VOICE = "🎙️ Voiceover Studio"
+PAGE_SURVEYS = "📋 Surveys"
+
+# Safe defaults for generation settings (overridden by sidebar widgets below)
+preferred_space = None
+width, height = RESOLUTIONS["Portrait 720×1280 (Shorts)"]
+duration = 3
+guidance = 5.0
+seed_param = -1
+
+with st.sidebar:
+    st.markdown('<p class="side-logo">🎬 Free AI Video Studio</p>', unsafe_allow_html=True)
+    st.caption("Professional AI video tools — 100% free.")
+    st.markdown("**🧭 Studio Tools**")
+    page = st.radio(
+        "Studio tools",
+        [PAGE_T2V, PAGE_I2V, PAGE_STOCK, PAGE_COLAB, PAGE_VOICE, PAGE_SURVEYS],
+        label_visibility="collapsed",
+    )
+
+    st.divider()
+
+    if page in (PAGE_T2V, PAGE_I2V):
+        st.subheader("⚙️ Settings")
+        st.success("🔓 **No API key needed!** This tool runs on public free Spaces.")
+
+        space_options = ["Auto (recommended — tries every Space)"] + [
+            f"{SPACE_ADAPTERS[s]['label']} ({s})" for s in T2V_CHAIN
+        ]
+        space_choice = st.selectbox(
+            "Preferred Space",
+            space_options,
+            help="On Auto, the app picks the best available Space; "
+                 "if it is busy, it moves on to the next one.",
+        )
+        if not space_choice.startswith("Auto"):
+            preferred_space = space_choice.rsplit("(", 1)[1].rstrip(")")
+
+        st.subheader("🎛️ Generation Settings")
+        res_label = st.selectbox("Resolution", list(RESOLUTIONS.keys()), index=0)
+        width, height = RESOLUTIONS[res_label]
+        duration = st.slider(
+            "Duration (seconds)",
+            min_value=1, max_value=8, value=3, step=1,
+            help="Longer videos can mean longer queue/wait times.",
+        )
+        guidance = st.slider(
+            "Guidance scale (prompt adherence)",
+            min_value=1.0, max_value=10.0, value=5.0, step=0.5,
+        )
+        seed_in = st.number_input(
+            "Seed (-1 = random)", min_value=-1, value=-1, step=1,
+        )
+        seed = None if seed_in == -1 else int(seed_in)
+        # -1 means random; adapters handle it
+        seed_param = -1 if seed is None else seed
+
+        with st.expander("💡 Free-Tier Reality Check"):
+            st.write(
+                "• **Completely free — no tokens or API keys required.**\n"
+                "• Videos are generated on **public Hugging Face Spaces** (LTX-Video, CogVideoX).\n"
+                "• **Queues:** free Spaces get busy — at peak times it can take 10–30 min. "
+                "The app automatically tries the next Space.\n"
+                "• **Hosting:** free (Streamlit Community Cloud)."
+            )
+
+    st.divider()
+    st.markdown(
+        '<p class="ceo-side">👤 <b>CEO: MUHAMMAD MUDASSIR YASEEN</b><br>'
+        "© 2026 Free AI Video Studio</p>",
+        unsafe_allow_html=True,
+    )
+
+
+# ----------------------------------------------------------------------------
+# Ad gate — visitors watch one short ad before the studio unlocks
+# ----------------------------------------------------------------------------
+if "ad_watched" not in st.session_state:
+    st.session_state.ad_watched = False
+    st.session_state.gate_start = time.time()
+
+if not st.session_state.ad_watched:
+    st.subheader("📺 A Quick Ad Before You Start")
+    st.write(
+        "This tool is **completely free** — ads are what keep it that way. "
+        f"Please wait **{AD_WAIT_SECONDS} seconds**, then click Continue "
+        "to open the studio."
+    )
+    _ad_html = AD_HTML.strip() or """
+        <div style="background:#1f2937;border:2px dashed #6b7280;border-radius:12px;height:250px;
+                    display:flex;align-items:center;justify-content:center;color:#9ca3af;
+                    font-family:sans-serif;font-size:18px;">📢 Your ad here</div>
+    """
+    try:
+        components.html(_ad_html, height=300, scrolling=True)
+    except Exception:
+        st.info("📢 Your ad here.")
+    if st.button("✅ Continue to the Studio", type="primary", use_container_width=True):
+        _waited = time.time() - st.session_state.gate_start
+        if _waited < AD_WAIT_SECONDS:
+            st.warning(f"⏳ Just a moment — {int(AD_WAIT_SECONDS - _waited)} seconds remaining.")
+        else:
+            st.session_state.ad_watched = True
+            st.rerun()
+    st.stop()
+
+
+def show_result(key_prefix: str, label: str) -> None:
+    """Render the last generated video (persisted in session state) + download."""
+    data = st.session_state.get(f"{key_prefix}_video")
+    name = st.session_state.get(f"{key_prefix}_name", "video.mp4")
+    if not data:
+        return
+    done_label = st.session_state.get(f"{key_prefix}_label_done", label)
+    st.success(f"✅ {done_label} ready!")
+    space_used = st.session_state.get(f"{key_prefix}_space_used")
+    if space_used:
+        st.caption(f"🤖 Generated with: **{space_used}** (public free Space)")
+    st.video(data, format="video/mp4")
+    st.download_button(
+        "⬇️ Download MP4",
+        data=data,
+        file_name=name,
+        mime="video/mp4",
+        use_container_width=True,
+    )
+
+
+# ---------------- Page: Text to Video ----------------
+if page == PAGE_T2V:
+    st.subheader("Describe it → get an MP4")
+    st.caption("⚡ Auto-fallback is ON: if one Space is busy, the app automatically tries the next one. No keys required.")
+    prompt = st.text_area(
+        "Prompt",
+        height=120,
+        placeholder="A cheerful plumber waves hello at the camera, bright workshop, "
+                    "expressive face, medium close-up",
+    )
+    negative = st.text_input(
+        "Negative prompt (optional)",
+        value="blurry, low quality, distorted faces, watermark, text",
+    )
+
+    story_mode = st.checkbox(
+        "🎞️ Story mode — linked clips, one long video (e.g. 30 sec)",
+        help="Each clip starts from the previous clip's last frame, "
+             "so everything feels like one continuous video. "
+             "Story mode uses Wan 2.2 14B (I2V) — it can be a bit slower.",
+    )
+    num_clips = 4
+    story_lines = ""
+    if story_mode:
+        num_clips = st.slider("How many clips?", min_value=2, max_value=6, value=4,
+                              help="Each clip is max ~8 sec. 4 clips ≈ 32 sec.")
+        st.caption(f"📏 Total: ~{num_clips * duration} seconds "
+                   f"({num_clips} clips × {duration}s)")
+        story_lines = st.text_area(
+            "Story prompts — one clip per line (blank lines repeat the main prompt above)",
+            height=110,
+            placeholder="Clip 1: plumber waves hello at camera\n"
+                        "Clip 2: plumber fixes the sink, water splashes\n"
+                        "Clip 3: plumber gives thumbs up, happy ending",
+        )
+
+    st.divider()
+    st.subheader("🎙️ Voiceover (optional)")
+    st.caption("Write a script — a free AI voice will be added to your video. Leave it blank for a silent video.")
+    voice_script = st.text_area(
+        "Voiceover script",
+        height=100,
+        placeholder="Is your drain clogged? Call EasyFix Plumbing now — same-day service, only $110!",
+    )
+    voice_label = st.selectbox(
+        "Voice",
+        list(VOICES.keys()),
+        index=0,
+    )
+
+    if st.button("🚀 Generate Video", type="primary", use_container_width=True, key="t2v_go"):
+        if not prompt.strip():
+            st.error("✏️ Please write a prompt first, then click Generate.")
+        else:
+            status = st.status("🎥 Starting generation…", expanded=True)
+            try:
+                base = dict(
+                    negative=negative.strip(),
+                    image_path=None,
+                    width=width, height=height,
+                    duration=float(duration),
+                    seed=seed_param,
+                    guidance=guidance,
+                )
+                if story_mode:
+                    lines = [l.strip() for l in story_lines.split("\n")
+                             if l.strip()]
+                    clip_prompts = [
+                        lines[i] if i < len(lines) else prompt.strip()
+                        for i in range(num_clips)
+                    ]
+                    video_bytes, used_label, n_clips = generate_story(
+                        status, preferred_space, clip_prompts, **base)
+                    fname = f"story_{int(time.time())}.mp4"
+                    label_done = f"{n_clips}-clip story"
+                else:
+                    video_bytes, used_label, _sid = generate_with_fallback(
+                        "t2v", status, preferred_space,
+                        prompt=prompt.strip(), **base)
+                    fname = f"t2v_{int(time.time())}.mp4"
+                    label_done = "Video"
+                # Voiceover (optional)
+                script = voice_script.strip()
+                if script:
+                    try:
+                        status.update(label="🎙️ Generating voiceover…",
+                                      state="running")
+                        voice_id = VOICES[voice_label]
+                        audio_bytes = generate_voiceover(script, voice_id)
+                        status.update(label="🔊 Adding voice to your video…",
+                                      state="running")
+                        video_bytes = mux_voiceover(video_bytes, audio_bytes)
+                        label_done += " + voiceover"
+                        fname = fname.replace(".mp4", "_voice.mp4")
+                    except Exception as ve:
+                        status.write(f"⚠️ Voiceover failed ({ve}) — delivering the silent video instead.")
+                st.session_state["t2v_video"] = video_bytes
+                st.session_state["t2v_name"] = fname
+                st.session_state["t2v_space_used"] = used_label
+                st.session_state["t2v_label_done"] = label_done
+                st.rerun()
+            except Exception as exc:  # never crash the app — explain instead
+                st.error(_friendly_space_error(exc))
+                with st.expander("🔧 Technical details (for debugging)"):
+                    st.code("".join(traceback.format_exception(exc))[-3000:])
+
+    st.markdown(
+        '<div class="tip">💡 <b>Tip:</b> short, clear prompts work best. '
+        "Describe style and motion separately, e.g. <i>'slow cinematic pan, golden hour lighting'</i>.</div>",
+        unsafe_allow_html=True,
+    )
+    with st.expander("🎭 Character Acting Guide — get great performances from your characters"):
+        st.write(
+            "**3 rules:**\n"
+            "1. **Describe the face + emotion** — e.g. `expressive face, smiling warmly`, "
+            "`determined eyes`\n"
+            "2. **Describe body language** — e.g. `natural hand gestures`, `walking confidently`\n"
+            "3. **Keep the camera close** — e.g. `medium close-up shot` so faces stay clear\n\n"
+            "**Example 1:**\n"
+            "`A cheerful plumber with a friendly expressive face, wearing blue overalls, "
+            "looks at the camera and gives a thumbs up with a big smile, natural hand motion, "
+            "medium close-up, bright workshop lighting`\n\n"
+            "**Example 2:**\n"
+            "`A brave firefighter woman with determined expressive eyes runs toward the camera "
+            "through light smoke, coat flowing naturally, cinematic slow motion, dramatic lighting`"
+        )
+    show_result("t2v", "Video")
+
+
+# ---------------- Page: Image to Video ----------------
+elif page == PAGE_I2V:
+    st.subheader("Upload a photo → animate it")
+    st.caption("⚡ Auto-fallback is ON: if one Space is busy, the app automatically tries the next one. No keys required.")
+    uploaded = st.file_uploader(
+        "Upload a photo (JPG / PNG)",
+        type=["jpg", "jpeg", "png", "webp"],
+    )
+    if uploaded is not None:
+        st.image(uploaded, caption="Source image", width=420)
+
+    motion = st.text_area(
+        "Motion prompt",
+        height=100,
+        placeholder="The camera slowly zooms in while the person smiles and waves, "
+                    "natural motion, cinematic",
+    )
+    negative2 = st.text_input(
+        "Negative prompt (optional)",
+        value="blurry, low quality, distorted faces, watermark, text",
+    )
+
+    if st.button("🚀 Animate Image", type="primary", use_container_width=True, key="i2v_go"):
+        if uploaded is None:
+            st.error("🖼️ Please upload a photo first.")
+        elif not motion.strip():
+            st.error("✏️ Please write a motion prompt — what should move in the photo?")
+        else:
+            # gradio_client needs a real file path for image upload
+            with tempfile.NamedTemporaryFile(
+                    suffix=".png", delete=False) as tmp:
+                tmp.write(uploaded.getvalue())
+                tmp_path = tmp.name
+            status = st.status("🎞️ Starting animation…", expanded=True)
+            try:
+                video_bytes, used_label, _space_id = generate_with_fallback(
+                    "i2v", status, preferred_space,
+                    prompt=motion.strip(),
+                    negative=negative2.strip(),
+                    image_path=tmp_path,
+                    width=width, height=height,
+                    duration=float(duration),
+                    seed=seed_param,
+                    guidance=guidance,
+                )
+                fname = f"i2v_{int(time.time())}.mp4"
+                st.session_state["i2v_video"] = video_bytes
+                st.session_state["i2v_name"] = fname
+                st.session_state["i2v_space_used"] = used_label
+                st.rerun()
+            except Exception as exc:  # never crash the app — explain instead
+                st.error(_friendly_space_error(exc))
+                with st.expander("🔧 Technical details (for debugging)"):
+                    st.code("".join(traceback.format_exception(exc))[-3000:])
+
+    st.markdown(
+        '<div class="tip">💡 <b>Tip:</b> clean, well-lit photos animate best. '
+        "For great <b>character acting</b>: upload a clear photo of your character + "
+        "describe the facial emotion in the motion prompt "
+        "(e.g. <i>'smiling warmly, expressive eyes'</i>).</div>",
+        unsafe_allow_html=True,
+    )
+    show_result("i2v", "Animated video")
+
+
+# ---------------- Page: Surveys ----------------
+elif page == PAGE_SURVEYS:
+    st.subheader("📋 Surveys")
+    st.write(
+        "Complete the surveys below — new surveys are added from time to time."
+    )
+    if not SURVEY_LINKS:
+        st.info("📝 No active surveys right now — check back soon!")
+    for _s in SURVEY_LINKS:
+        with st.container(border=True):
+            st.markdown(f"**{_s.get('title', 'Survey')}**")
+            if _s.get("desc"):
+                st.caption(_s["desc"])
+            st.link_button("▶ Start Survey", _s["url"])
+
+
+# ---------------- Page: Stock Videos ----------------
+elif page == PAGE_STOCK:
+    st.subheader("🎞️ Stock Videos")
+    st.caption("Free stock footage — **no quotas, no limits!** Perfect for plumbing, electrical, HVAC, and more.")
     src = st.radio("Source", ["Pixabay", "Pexels"], horizontal=True,
-                   help="Pexels keys paused hain — Pixabay abhi free keys de raha hai.")
+                   help="Pexels has paused new key signups — Pixabay is still issuing free keys.")
     if src == "Pixabay":
         _default_px = PIXABAY_API_KEY or ""
         stock_key = st.text_input(
@@ -899,17 +958,17 @@ with tab4:
             type="password",
             key="pixabay_key",
             value=_default_px,
-            placeholder="Paste free API key",
+            placeholder="Your free API key",
         ) or _default_px
     else:
         stock_key = st.text_input(
             "Pexels API Key (free: pexels.com/api)",
             type="password",
             key="pexels_key",
-            placeholder="Paste free API key",
-            help="Note: Pexels ne naye keys pause kiye hain (Oct 2026).",
+            placeholder="Your free API key",
+            help="Note: Pexels paused new key signups (Oct 2026).",
         )
-    # Quick preset buttons for his 7 home services
+    # Quick preset buttons for the 7 home services
     presets = {
         "🔧 Plumbing": "plumber plumbing repair",
         "⚡ Electrical": "electrician electrical work",
@@ -930,7 +989,7 @@ with tab4:
     )
     if st.button("🔍 Search", type="primary") and query:
         if not stock_key:
-            st.warning(f"⚠️ Pehle {src} API key dalein (free)")
+            st.warning(f"⚠️ Please enter your {src} API key first (free)")
         else:
             with st.spinner(f"Searching {src}…"):
                 try:
@@ -941,7 +1000,7 @@ with tab4:
                     st.session_state["pexels_results"] = results
                     st.session_state["pexels_src"] = src
                 except Exception as e:
-                    st.error(f"Search fail: {e}")
+                    st.error(f"Search failed: {e}")
     for r in st.session_state.get("pexels_results", []):
         with st.container(border=True):
             c1, c2 = st.columns([1, 2])
@@ -950,7 +1009,7 @@ with tab4:
                     st.image(r["preview"], use_container_width=True)
             with c2:
                 st.write(f"⏱️ {r['duration']}s • 📐 {r['width']}×{r['height']}")
-                st.link_button("▶ Pexels par dekhein", r["url"])
+                st.link_button("▶ View on source site", r["url"])
                 # Download via server
                 if st.button(f"⬇️ Download", key=f"pexdl_{r['id']}"):
                     with st.spinner("Downloading…"):
@@ -963,7 +1022,7 @@ with tab4:
                             st.session_state[f"pexvid_{r['id']}"] = data
                             st.success(f"✅ Downloaded ({len(data)//1024} KB)")
                         except Exception as e:
-                            st.error(f"Download fail: {e}")
+                            st.error(f"Download failed: {e}")
                 data = st.session_state.get(f"pexvid_{r['id']}")
                 if data:
                     st.download_button(
@@ -975,35 +1034,28 @@ with tab4:
                     )
 
 
-st.divider()
-st.caption(
-    "Built with Streamlit + `gradio_client`. Videos via public Hugging Face "
-    "Spaces: LTX-Video, CogVideoX — no API keys needed."
-)
-
-
-# ---------------- Tab 5: Colab GPU ----------------
-with tab5:
+# ---------------- Page: Colab GPU ----------------
+elif page == PAGE_COLAB:
     st.subheader("📓 Colab GPU — 100% FREE Video Generation")
-    st.success("🎉 **TOTALLY FREE WORKFLOW** — koi quota nahi, koi paise nahi!")
+    st.success("🎉 **TOTALLY FREE WORKFLOW** — no quotas, no payments, ever!")
     st.markdown("""
-**🔄 Free Workflow:**
-1. 📓 **Colab** se video banao (free T4 GPU)
-2. 🎙️ **Isi tool** se voiceover do (free, koi quota nahi)
-3. 🔗 **Stitch** karke jod do (free)
+**🔄 The Free Workflow:**
+1. 📓 **Generate your video on Colab** (free T4 GPU)
+2. 🎙️ **Add a voiceover with this studio** (free, no quotas)
+3. 🔗 **Stitch your clips together** (free)
 
 **= 100% FREE!** 🎉
 """)
     st.divider()
-    st.caption("Apna free T4 GPU — **koi quota nahi!** Slow hai (15-30 min/clip) lekin unlimited.")
+    st.caption("Your own free T4 GPU — **no quotas!** Slower (15–30 min per clip) but unlimited.")
     st.markdown("""
-**Kaise use karein:**
-1. [Google Colab](https://colab.research.google.com) kholein
-2. **Runtime → Change runtime type → T4 GPU** select karein
-3. Neeche wala code **copy** karke Colab ke cell mein **paste** karein
-4. Apna **prompt** likhein aur cell **chalayein** (▶ button)
-5. Video ban jayegi to **download** kar lein
-6. **Wapas is tool mein** aakar voiceover add karein!
+**How to use it:**
+1. Open [Google Colab](https://colab.research.google.com)
+2. Go to **Runtime → Change runtime type** and select **T4 GPU**
+3. **Copy** the code below and **paste** it into a Colab cell
+4. Write your **prompt** and **run** the cell (▶ button)
+5. Once the video is ready, **download** it
+6. Come back here and add a **voiceover**!
 """)
     colab_code = '''# 🎬 Free Video Generator (Wan 2.1 on Colab T4)
 # Cell 1: Install
@@ -1013,7 +1065,7 @@ with tab5:
 import torch
 from diffusers import WanPipeline
 
-prompt = "Pixar-style 3D cartoon plumber with cat face, blue uniform, fixing a sink"  # <-- apna prompt yahan likhein
+prompt = "Pixar-style 3D cartoon plumber with cat face, blue uniform, fixing a sink"  # <-- write your prompt here
 
 pipe = WanPipeline.from_pretrained("Wan-AI/Wan2.1-T2V-1.3B-Diffusers", torch_dtype=torch.float16)
 pipe.to("cuda")
@@ -1025,4 +1077,84 @@ export_to_video(video, "output.mp4")
 print("✅ Video ready: output.mp4")
 '''
     st.code(colab_code, language="python")
-    st.caption("💡 Tip: Colab background mein chalega — aap tool mein aur kaam kar sakte hain!")
+    st.caption("💡 Tip: Colab runs in the background — you can keep working in this studio meanwhile!")
+
+
+# ---------------- Page: Voiceover Studio ----------------
+elif page == PAGE_VOICE:
+    st.subheader("🎙️ Voiceover Studio")
+    st.caption("Turn any script into a professional AI voiceover — free, with no quotas. Download the MP3 or attach it to your own video.")
+
+    vs_script = st.text_area(
+        "Voiceover script",
+        height=140,
+        placeholder="Is your drain clogged? Call EasyFix Plumbing now — same-day service, only $110!",
+        key="vs_script",
+    )
+    vs_voice_label = st.selectbox("Voice", list(VOICES.keys()), index=0, key="vs_voice")
+
+    if st.button("🎙️ Generate Voiceover", type="primary", use_container_width=True, key="vs_go"):
+        if not vs_script.strip():
+            st.error("✏️ Please write a script first.")
+        else:
+            try:
+                with st.spinner("🎙️ Generating your voiceover…"):
+                    vs_audio = generate_voiceover(vs_script.strip(), VOICES[vs_voice_label])
+                st.session_state["vs_audio"] = vs_audio
+                st.session_state["vs_name"] = f"voiceover_{int(time.time())}.mp3"
+            except Exception as e:
+                st.error(f"⚠️ Voiceover failed: {e}")
+
+    if st.session_state.get("vs_audio"):
+        st.success("✅ Your voiceover is ready!")
+        st.audio(st.session_state["vs_audio"], format="audio/mp3")
+        st.download_button(
+            "⬇️ Download MP3",
+            data=st.session_state["vs_audio"],
+            file_name=st.session_state.get("vs_name", "voiceover.mp3"),
+            mime="audio/mp3",
+            use_container_width=True,
+            key="vs_dl",
+        )
+
+    st.divider()
+    with st.expander("🎬 Attach this voiceover to your own video"):
+        st.caption("Upload any MP4 and the studio will merge your voiceover into it — free.")
+        vs_video = st.file_uploader("Upload your video (MP4)", type=["mp4"], key="vs_video")
+        if st.button("🔊 Combine Video + Voiceover", use_container_width=True, key="vs_mux"):
+            if vs_video is None:
+                st.error("🖼️ Please upload a video first.")
+            elif not st.session_state.get("vs_audio"):
+                st.error("🎙️ Please generate a voiceover first.")
+            else:
+                try:
+                    with st.spinner("🔊 Merging voiceover into your video…"):
+                        vs_final = mux_voiceover(vs_video.getvalue(), st.session_state["vs_audio"])
+                    st.session_state["vs_final"] = vs_final
+                    st.success("✅ Done — your video now has a voiceover!")
+                except Exception as e:
+                    st.error(f"⚠️ Could not merge audio: {e}")
+        if st.session_state.get("vs_final"):
+            st.video(st.session_state["vs_final"], format="video/mp4")
+            st.download_button(
+                "⬇️ Download Video with Voiceover",
+                data=st.session_state["vs_final"],
+                file_name=f"video_voice_{int(time.time())}.mp4",
+                mime="video/mp4",
+                use_container_width=True,
+                key="vs_final_dl",
+            )
+
+
+# ----------------------------------------------------------------------------
+# Footer — professional branding
+# ----------------------------------------------------------------------------
+st.divider()
+st.caption(
+    "Built with Streamlit + `gradio_client`. Videos via public Hugging Face "
+    "Spaces: LTX-Video, CogVideoX — no API keys needed."
+)
+st.markdown(
+    '<p class="footer">© 2026 Free AI Video Studio &nbsp;|&nbsp; CEO: Muhammad Mudassir Yaseen</p>',
+    unsafe_allow_html=True,
+)
