@@ -173,10 +173,10 @@ def _wan_submit(client: Client, kind: str, prompt: str, negative: str,
 
 # Space registry: label + submit adapter. Order = fallback priority.
 SPACE_ADAPTERS = {
-    SPACE_LTX:  {"label": "LTX-Video (fast)", "fn": _ltx_submit},
-    SPACE_COG5: {"label": "CogVideoX-5B",     "fn": _cog_submit},
-    SPACE_COG2: {"label": "CogVideoX-2B",     "fn": _cog_submit},
-    SPACE_WAN:  {"label": "Wan 2.2 14B (I2V)", "fn": _wan_submit},
+    SPACE_LTX:  {"label": "⚡ Turbo Engine", "fn": _ltx_submit},
+    SPACE_COG5: {"label": "🎬 Pro Engine",   "fn": _cog_submit},
+    SPACE_COG2: {"label": "🚀 Fast Engine",  "fn": _cog_submit},
+    SPACE_WAN:  {"label": "🎨 HD Engine",    "fn": _wan_submit},
 }
 
 T2V_CHAIN = [SPACE_LTX, SPACE_COG5, SPACE_COG2]
@@ -260,14 +260,11 @@ def _result_to_bytes(result) -> bytes:
 def _friendly_space_error(exc: Exception) -> str:
     low = str(exc).lower()
     if "queue_full" in low or "queue is full" in low:
-        return ("⏳ **All Spaces are busy.** Public free Spaces get crowded — "
-                "please wait a few minutes and try again.")
+        return ("⏳ **All engines are busy.** Please wait a few minutes and try again.")
     if "timeout" in low or "timed out" in low:
-        return ("⏳ **Request timed out.** The Space didn't respond (long queue). "
-                "Try again — the app will automatically try the next Space.")
+        return ("⏳ **Request timed out.** Please try again — the app will automatically try the next engine.")
     if "connection" in low or "unreachable" in low or "failed to connect" in low:
-        return ("🔌 **Couldn't connect to the Space.** It may be down — "
-                "the app has likely already tried the next Space.")
+        return ("🔌 **Connection issue.** Please try again in a moment.")
     short = str(exc).strip()[:350]
     return f"⚠️ **Generation failed:** {short}"
 
@@ -348,14 +345,14 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                 # client and move straight to the next Space.
                 if _is_connect_error(exc):
                     _client_cache.pop(space_id, None)
-                    status.write(f"⚠️ {label} unreachable — trying the next Space…")
+                    status.write(f"⚠️ {label} unreachable — trying the next engine…")
                     break  # → next Space
                 # Stale API info in cached client (Space updated mid-session):
                 # drop the client so the next attempt re-fetches the API.
                 if "not a valid key-word argument" in low:
                     _client_cache.pop(space_id, None)
                     if attempt == 1:
-                        status.write(f"🔄 Refreshing {label} API…")
+                        status.write(f"🔄 Refreshing {label}…")
                         time.sleep(3)
                         continue
                 transient = any(k in low for k in (
@@ -365,10 +362,10 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                     status.write(f"⏳ {label} is busy — retrying…")
                     time.sleep(5)
                     continue
-                status.write(f"⚠️ {label} failed — trying the next Space…")
+                status.write(f"⚠️ {label} failed — trying the next engine…")
                 break  # → next Space
 
-    status.update(label="❌ All Spaces failed or are busy", state="error")
+    status.update(label="❌ All engines are busy right now", state="error")
     assert last_exc is not None
     raise last_exc
 
@@ -740,6 +737,10 @@ st.markdown(
     }
     .stExpander { border-radius: 12px; border: 1px solid #27272a; }
     h1, h2, h3 { letter-spacing: -0.01em; }
+    footer { visibility: hidden; }
+    #MainMenu { visibility: hidden; }
+    header { visibility: hidden; }
+    .stDeployButton { display: none; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -788,17 +789,18 @@ with st.sidebar:
         st.subheader("⚙️ Settings")
         st.success("🔓 **No API key needed!** Start creating right away.")
 
-        space_options = ["Auto (recommended — tries every Space)"] + [
-            f"{SPACE_ADAPTERS[s]['label']} ({s})" for s in T2V_CHAIN
+        _engine_ids = list(T2V_CHAIN)
+        space_options = ["Auto (recommended)"] + [
+            SPACE_ADAPTERS[s]["label"] for s in _engine_ids
         ]
         space_choice = st.selectbox(
-            "Preferred Space",
+            "Preferred Engine",
             space_options,
-            help="On Auto, the app picks the best available Space; "
+            help="On Auto, the app picks the best available engine; "
                  "if it is busy, it moves on to the next one.",
         )
         if not space_choice.startswith("Auto"):
-            preferred_space = space_choice.rsplit("(", 1)[1].rstrip(")")
+            preferred_space = _engine_ids[space_options.index(space_choice) - 1]
 
         st.subheader("🎛️ Generation Settings")
         res_label = st.selectbox("Resolution", list(RESOLUTIONS.keys()), index=0)
@@ -920,7 +922,7 @@ def show_result(key_prefix: str, label: str) -> None:
 # ---------------- Page: Text to Video ----------------
 if page == PAGE_T2V:
     st.subheader("Describe it → get an MP4")
-    st.caption("⚡ Auto-fallback is ON: if one Space is busy, the app automatically tries the next one. No keys required.")
+    st.caption("⚡ Auto-fallback is ON: if one engine is busy, the app automatically tries the next one.")
     prompt = st.text_area(
         "Prompt",
         height=120,
@@ -1049,7 +1051,7 @@ if page == PAGE_T2V:
 # ---------------- Page: Image to Video ----------------
 elif page == PAGE_I2V:
     st.subheader("Upload a photo → animate it")
-    st.caption("⚡ Auto-fallback is ON: if one Space is busy, the app automatically tries the next one. No keys required.")
+    st.caption("⚡ Auto-fallback is ON: if one engine is busy, the app automatically tries the next one.")
     uploaded = st.file_uploader(
         "Upload a photo (JPG / PNG)",
         type=["jpg", "jpeg", "png", "webp"],
