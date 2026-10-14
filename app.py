@@ -537,6 +537,21 @@ st.markdown(
     /* Premium theme */
     .stApp { background: #0a0a0f; }
     section[data-testid="stSidebar"] { background: #111118; border-right: 1px solid #23232e; }
+    /* Fix text visibility on dark */
+    .stApp, .stApp p, .stApp div, .stApp span, .stApp label {
+        color: #e4e4e7 !important;
+    }
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
+        color: #ffffff !important;
+        font-weight: 700 !important;
+    }
+    .stMarkdown p { color: #e4e4e7 !important; font-weight: 500; }
+    .stCaption { color: #a1a1aa !important; }
+    section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] div,
+    section[data-testid="stSidebar"] span, section[data-testid="stSidebar"] label {
+        color: #e4e4e7 !important;
+        font-weight: 500;
+    }
     .hero {
         background: linear-gradient(135deg, #a78bfa 0%, #f472b6 50%, #fbbf24 100%);
         -webkit-background-clip: text;
