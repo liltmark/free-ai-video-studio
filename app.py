@@ -886,9 +886,9 @@ def show_result(key_prefix: str, label: str) -> None:
     if not st.session_state[f"{key_prefix}_ad_done"]:
         st.warning("📢 Please watch this ad to unlock your video download")
         import streamlit.components.v1 as _comp
-        _ad = """<div style="background:#1f2937;border-radius:12px;padding:20px;text-align:center;color:#9ca3af;">📢 Advertisement</div>"""
+        _ad = AD_HTML.strip() or """<div style="background:#1f2937;border-radius:12px;padding:20px;text-align:center;color:#9ca3af;">📢 Advertisement</div>"""
         try:
-            _comp.html(_ad, height=120)
+            _comp.html(_ad, height=300, scrolling=True)
         except:
             pass
         if st.button("✅ I've watched the ad — Unlock Download", key=f"{key_prefix}_ad_btn", type="primary"):
@@ -1019,6 +1019,9 @@ if page == PAGE_T2V:
                 st.session_state["t2v_name"] = fname
                 st.session_state["t2v_space_used"] = used_label
                 st.session_state["t2v_label_done"] = label_done
+                # New video -> ad + survey gates reset so they show for EVERY video
+                st.session_state["t2v_ad_done"] = False
+                st.session_state["t2v_survey_done"] = False
                 st.rerun()
             except Exception as exc:  # never crash the app — explain instead
                 st.error(_friendly_space_error(exc))
@@ -1097,6 +1100,9 @@ elif page == PAGE_I2V:
                 st.session_state["i2v_video"] = video_bytes
                 st.session_state["i2v_name"] = fname
                 st.session_state["i2v_space_used"] = used_label
+                # New video -> ad + survey gates reset so they show for EVERY video
+                st.session_state["i2v_ad_done"] = False
+                st.session_state["i2v_survey_done"] = False
                 st.rerun()
             except Exception as exc:  # never crash the app — explain instead
                 st.error(_friendly_space_error(exc))
@@ -1134,11 +1140,12 @@ elif page == PAGE_STOCK:
     st.subheader("🎞️ Stock Videos")
     st.caption("Free stock footage — **no quotas, no limits!** Perfect for plumbing, electrical, HVAC, and more.")
     src = st.radio("Source", ["Studio Library", "Premium Library"], horizontal=True,
-                   help="Pexels has paused new key signups — Pixabay is still issuing free keys.")
-    if src == "Pixabay":
+                   help="Studio Library works instantly, no key needed.")
+    _is_pixabay = (src == "Studio Library")  # Studio Library = Pixabay backend
+    if _is_pixabay:
         _default_px = PIXABAY_API_KEY or ""
         stock_key = st.text_input(
-            "Pixabay API Key (free: pixabay.com/api/docs)",
+            "Library API Key (already filled — free)",
             type="password",
             key="pixabay_key",
             value=_default_px,
@@ -1146,11 +1153,10 @@ elif page == PAGE_STOCK:
         ) or _default_px
     else:
         stock_key = st.text_input(
-            "Pexels API Key (free: pexels.com/api)",
+            "Premium Library API Key",
             type="password",
             key="pexels_key",
-            placeholder="Your free API key",
-            help="Note: Pexels paused new key signups (Oct 2026).",
+            placeholder="Enter key to unlock",
         )
     # Quick preset buttons for the 7 home services
     presets = {
@@ -1177,7 +1183,7 @@ elif page == PAGE_STOCK:
         else:
             with st.spinner(f"Searching {src}…"):
                 try:
-                    if src == "Pixabay":
+                    if _is_pixabay:
                         results = _pixabay_search(query, stock_key)
                     else:
                         results = _pexels_search(query, stock_key)
@@ -1220,48 +1226,52 @@ elif page == PAGE_STOCK:
 
 # ---------------- Page: Colab GPU ----------------
 elif page == PAGE_COLAB:
-    st.subheader("📓 Colab GPU — 100% FREE Video Generation")
-    st.success("🎉 **TOTALLY FREE WORKFLOW** — no quotas, no payments, ever!")
+    st.subheader("📓 Colab GPU — Free Lip-Sync Studio")
+    st.info("🎭 **Make any photo talk!** Upload a character photo + audio in Colab (free T4 GPU) and get a lip-synced video. Free Colab has daily usage limits — if the GPU is busy, try again later.")
     st.markdown("""
-**🔄 The Free Workflow:**
-1. 📓 **Generate your video on Colab** (free T4 GPU)
-2. 🎙️ **Add a voiceover with this studio** (free, no quotas)
-3. 🔗 **Stitch your clips together** (free)
+**🔄 The Workflow:**
+1. 📓 **Lip-sync your character on Colab** (free T4 GPU, ~3 min per clip)
+2. 🎙️ **Make the voiceover here** in Voiceover Studio (or upload your own MP3)
+3. ⬇️ **Download** the talking video from Colab
 
-**= 100% FREE!** 🎉
+**100% free!** 🎉
 """)
     st.divider()
-    st.caption("Your own free T4 GPU — **no quotas!** Slower (15–30 min per clip) but unlimited.")
     st.markdown("""
 **How to use it:**
-1. Open [Google Colab](https://colab.research.google.com)
-2. Go to **Runtime → Change runtime type** and select **T4 GPU**
-3. **Copy** the code below and **paste** it into a Colab cell
-4. Write your **prompt** and **run** the cell (▶ button)
-5. Once the video is ready, **download** it
-6. Come back here and add a **voiceover**!
+1. Open [Google Colab](https://colab.research.google.com) and start a new notebook
+2. **Runtime → Change runtime type** → select **T4 GPU** → Save
+3. **Copy** the code below into a cell and **run** it (▶ button)
+4. When it asks, **upload** your character photo and your voiceover MP3
+5. **Download** the lip-synced video when it's done!
 """)
-    colab_code = '''# 🎬 Free Video Generator (Wan 2.1 on Colab T4)
+    colab_code = '''# 🎭 Free Lip-Sync (SadTalker on Colab T4)
+# Run all cells in order. ~3 min per clip on free T4.
+
 # Cell 1: Install
-!pip install -q diffusers transformers accelerate
+!git clone -q https://github.com/OpenTalker/SadTalker /content/SadTalker
+%cd /content/SadTalker
+!pip install -q torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu118
+!pip install -q -r requirements.txt
 
-# Cell 2: Generate
-import torch
-from diffusers import WanPipeline
+# Cell 2: Models (~2GB, one-time)
+%cd /content/SadTalker
+!bash scripts/download_models.sh
 
-prompt = "Pixar-style 3D cartoon plumber with cat face, blue uniform, fixing a sink"  # <-- write your prompt here
+# Cell 3: Upload your files, then run
+from google.colab import files
+print("Upload a character PHOTO (square works best):")
+photo = list(files.upload().keys())[0]
+print("Upload your VOICEOVER mp3:")
+audio = list(files.upload().keys())[0]
 
-pipe = WanPipeline.from_pretrained("Wan-AI/Wan2.1-T2V-1.3B-Diffusers", torch_dtype=torch.float16)
-pipe.to("cuda")
-video = pipe(prompt=prompt, num_frames=81, height=480, width=832).frames[0]
-
-# Save
-from diffusers.utils import export_to_video
-export_to_video(video, "output.mp4")
-print("✅ Video ready: output.mp4")
+# Cell 4: Lip-sync!
+!python inference.py --driven_audio "$audio" --source_image "$photo" \
+    --result_dir /content/out --still --preprocess full --size 256
+print("✅ Done! Download your video from /content/out")
 '''
     st.code(colab_code, language="python")
-    st.caption("💡 Tip: Colab runs in the background — you can keep working in this studio meanwhile!")
+    st.caption("💡 Tip: square character photos give the best results!")
 
 
 # ---------------- Page: Voiceover Studio ----------------
