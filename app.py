@@ -47,7 +47,7 @@ SURVEY_LINKS = [
 ]
 
 # Pixabay free API key (stock videos — no quota). Get a free key at pixabay.com/api/docs
-PIXABAY_API_KEY = "58029727-e3e5a7f4e4b4d5ab8caa6f484"
+PIXABAY_API_KEY = __import__("os").environ.get("PIXABAY_API_KEY", "")
 
 
 
