@@ -89,7 +89,7 @@ SPACE_COG5 = "zai-org/CogVideoX-5B-Space"         # official CogVideoX 5B demo
 SPACE_COG2 = "zai-org/CogVideoX-2B-Space"         # official CogVideoX 2B demo
 SPACE_WAN = "Upsampler/wan-2-2-14b-image-to-video"  # Wan 2.2 14B I2V (verified 2026-10-13)
 
-JOB_TIMEOUT = 1800  # seconds (30 min) — public queues can be slow at peak times
+JOB_TIMEOUT = 480  # seconds (8 min) — public queues can be slow at peak times
 
 
 def _ltx_submit(client: Client, kind: str, prompt: str, negative: str,
@@ -308,13 +308,31 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                 start = time.time()
                 last_qpos = None
                 last_beat = 0.0
-                while not job.done():
+                while True:
+                    # Timeout + heartbeat FIRST — these never block, so a
+                    # hanging job.status() can never starve them.
                     if time.time() - start > JOB_TIMEOUT:
                         try:
                             job.cancel()
                         except Exception:
                             pass
-                        raise TimeoutError(f"{label}: took longer than 30 minutes")
+                        raise TimeoutError(f"{label}: took longer than 8 minutes")
+                    now = time.time()
+                    if now - last_beat >= 25:
+                        last_beat = now
+                        mins = int((now - start) // 60)
+                        secs = int((now - start) % 60)
+                        qtxt = f" (queue #{last_qpos})" if last_qpos else ""
+                        status.update(
+                            label=f"🎥 {label} — still working{qtxt}… "
+                                  f"{mins}m {secs}s elapsed",
+                            state="running")
+                    try:
+                        _done = job.done()
+                    except Exception:
+                        _done = False
+                    if _done:
+                        break
                     try:
                         stt = job.status()
                         code = stt.code if hasattr(stt, "code") else None
@@ -330,18 +348,6 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                                 state="running")
                     except Exception:
                         pass
-                    # Heartbeat: keep messages flowing so Streamlit Cloud
-                    # never drops the session during a long queue wait.
-                    now = time.time()
-                    if now - last_beat >= 25:
-                        last_beat = now
-                        mins = int((now - start) // 60)
-                        secs = int((now - start) % 60)
-                        qtxt = f" (queue #{last_qpos})" if last_qpos else ""
-                        status.update(
-                            label=f"🎥 {label} — still working{qtxt}… "
-                                  f"{mins}m {secs}s elapsed",
-                            state="running")
                     time.sleep(10)
                 video_bytes = _result_to_bytes(job.result())
                 status.update(label=f"✅ Video ready — via {label}",
