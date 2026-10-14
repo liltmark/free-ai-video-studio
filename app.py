@@ -984,7 +984,17 @@ st.caption(
 
 # ---------------- Tab 5: Colab GPU ----------------
 with tab5:
-    st.subheader("📓 Colab GPU — Free Video Generation")
+    st.subheader("📓 Colab GPU — 100% FREE Video Generation")
+    st.success("🎉 **TOTALLY FREE WORKFLOW** — koi quota nahi, koi paise nahi!")
+    st.markdown("""
+**🔄 Free Workflow:**
+1. 📓 **Colab** se video banao (free T4 GPU)
+2. 🎙️ **Isi tool** se voiceover do (free, koi quota nahi)
+3. 🔗 **Stitch** karke jod do (free)
+
+**= 100% FREE!** 🎉
+""")
+    st.divider()
     st.caption("Apna free T4 GPU — **koi quota nahi!** Slow hai (15-30 min/clip) lekin unlimited.")
     st.markdown("""
 **Kaise use karein:**
@@ -993,6 +1003,7 @@ with tab5:
 3. Neeche wala code **copy** karke Colab ke cell mein **paste** karein
 4. Apna **prompt** likhein aur cell **chalayein** (▶ button)
 5. Video ban jayegi to **download** kar lein
+6. **Wapas is tool mein** aakar voiceover add karein!
 """)
     colab_code = '''# 🎬 Free Video Generator (Wan 2.1 on Colab T4)
 # Cell 1: Install
