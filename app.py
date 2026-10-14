@@ -172,7 +172,7 @@ SPACE_ADAPTERS = {
     SPACE_WAN:  {"label": "🎨 HD Engine",    "fn": _wan_submit},
 }
 
-T2V_CHAIN = [SPACE_LTX, SPACE_COG5, SPACE_COG2]
+T2V_CHAIN = [SPACE_LTX]  # CogVideoX removed: fixed 6s output always exceeds free GPU limit
 # I2V reality (verified 2026-10-13): LTX /image_to_video raises a server-side
 # exception; CogVideoX-2B /generate has NO image param at all (T2V only).
 # Working I2V: Wan 2.2 14B (verified live) + CogVideoX-5B (quota-unstable).
