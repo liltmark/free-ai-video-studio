@@ -661,7 +661,21 @@ st.markdown(
     }
     .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div {
         border-radius: 10px;
-        border: 1px solid #3f3f46;
+        border: 1px solid #52525b;
+        background-color: #18181b !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        font-size: 15px !important;
+    }
+    .stTextArea > div > div > textarea {
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        line-height: 1.6 !important;
+    }
+    .stTextArea > div > div > textarea::placeholder,
+    .stTextInput > div > div > input::placeholder {
+        color: #71717a !important;
+        font-weight: 400 !important;
     }
     .stExpander { border-radius: 12px; border: 1px solid #27272a; }
     h1, h2, h3 { letter-spacing: -0.01em; }
