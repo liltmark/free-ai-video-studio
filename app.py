@@ -1,5 +1,5 @@
 """
-🎬 Free AI Video Studio — Gradio Edition
+🎭 Imposter — Gradio Edition
 ========================================
 Text-to-Video + Image-to-Video web app powered by PUBLIC Hugging Face
 Gradio Spaces via `gradio_client`.
@@ -551,7 +551,7 @@ RESOLUTIONS = {
 # ----------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="🎬 Free AI Video Studio",
+    page_title="🎭 Imposter",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -670,11 +670,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown('<p class="hero">🎬 Free AI Video Studio</p>', unsafe_allow_html=True)
+st.markdown('<p class="hero">🎭 Imposter</p>', unsafe_allow_html=True)
 st.markdown('<span class="ceo-badge">👑 CEO: MUHAMMAD MUDASSIR YASEEN</span>', unsafe_allow_html=True)
 st.markdown(
     '<p class="sub">Text-to-Video &amp; Image-to-Video — 100% free, no API keys. '
-    "Powered by Free AI Video Studio.</p>",
+    "Powered by Imposter.</p>",
     unsafe_allow_html=True,
 )
 
@@ -698,7 +698,7 @@ guidance = 5.0
 seed_param = -1
 
 with st.sidebar:
-    st.markdown('<p class="side-logo">🎬 Free AI Video Studio</p>', unsafe_allow_html=True)
+    st.markdown('<p class="side-logo">🎭 Imposter</p>', unsafe_allow_html=True)
     st.caption("Professional AI video tools — 100% free.")
     st.markdown("**🧭 Studio Tools**")
     page = st.radio(
@@ -756,7 +756,7 @@ with st.sidebar:
     st.divider()
     st.markdown(
         '<p class="ceo-side">👤 <b>CEO: MUHAMMAD MUDASSIR YASEEN</b><br>'
-        "© 2026 Free AI Video Studio</p>",
+        "© 2026 Imposter</p>",
         unsafe_allow_html=True,
     )
 
@@ -1228,9 +1228,9 @@ elif page == PAGE_VOICE:
 # ----------------------------------------------------------------------------
 st.divider()
 st.caption(
-    "© 2026 Free AI Video Studio | CEO: Muhammad Mudassir Yaseen | All rights reserved."
+    "© 2026 Imposter | CEO: Muhammad Mudassir Yaseen | All rights reserved."
 )
 st.markdown(
-    '<p class="footer">© 2026 Free AI Video Studio &nbsp;|&nbsp; CEO: Muhammad Mudassir Yaseen</p>',
+    '<p class="footer">© 2026 Imposter &nbsp;|&nbsp; CEO: Muhammad Mudassir Yaseen</p>',
     unsafe_allow_html=True,
 )
