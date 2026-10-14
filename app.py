@@ -594,7 +594,7 @@ st.markdown('<p class="hero">🎬 Free AI Video Studio</p>', unsafe_allow_html=T
 st.markdown('<p class="ceo">CEO: MUHAMMAD MUDASSIR YASEEN</p>', unsafe_allow_html=True)
 st.markdown(
     '<p class="sub">Text-to-Video &amp; Image-to-Video — 100% free, no API keys. '
-    "Powered by public Hugging Face Spaces (LTX-Video, CogVideoX).</p>",
+    "Powered by Free AI Video Studio.</p>",
     unsafe_allow_html=True,
 )
 
@@ -631,7 +631,7 @@ with st.sidebar:
 
     if page in (PAGE_T2V, PAGE_I2V):
         st.subheader("⚙️ Settings")
-        st.success("🔓 **No API key needed!** This tool runs on public free Spaces.")
+        st.success("🔓 **No API key needed!** Start creating right away.")
 
         space_options = ["Auto (recommended — tries every Space)"] + [
             f"{SPACE_ADAPTERS[s]['label']} ({s})" for s in T2V_CHAIN
@@ -667,7 +667,7 @@ with st.sidebar:
         with st.expander("💡 Free-Tier Reality Check"):
             st.write(
                 "• **Completely free — no tokens or API keys required.**\n"
-                "• Videos are generated on **public Hugging Face Spaces** (LTX-Video, CogVideoX).\n"
+                "• Videos are generated on our **high-performance AI servers**.\n"
                 "• **Queues:** free Spaces get busy — at peak times it can take 10–30 min. "
                 "The app automatically tries the next Space.\n"
                 "• **Hosting:** free (Streamlit Community Cloud)."
@@ -722,9 +722,6 @@ def show_result(key_prefix: str, label: str) -> None:
         return
     done_label = st.session_state.get(f"{key_prefix}_label_done", label)
     st.success(f"✅ {done_label} ready!")
-    space_used = st.session_state.get(f"{key_prefix}_space_used")
-    if space_used:
-        st.caption(f"🤖 Generated with: **{space_used}** (public free Space)")
     st.video(data, format="video/mp4")
     st.download_button(
         "⬇️ Download MP4",
@@ -949,7 +946,7 @@ elif page == PAGE_SURVEYS:
 elif page == PAGE_STOCK:
     st.subheader("🎞️ Stock Videos")
     st.caption("Free stock footage — **no quotas, no limits!** Perfect for plumbing, electrical, HVAC, and more.")
-    src = st.radio("Source", ["Pixabay", "Pexels"], horizontal=True,
+    src = st.radio("Source", ["Studio Library", "Premium Library"], horizontal=True,
                    help="Pexels has paused new key signups — Pixabay is still issuing free keys.")
     if src == "Pixabay":
         _default_px = PIXABAY_API_KEY or ""
@@ -1151,8 +1148,7 @@ elif page == PAGE_VOICE:
 # ----------------------------------------------------------------------------
 st.divider()
 st.caption(
-    "Built with Streamlit + `gradio_client`. Videos via public Hugging Face "
-    "Spaces: LTX-Video, CogVideoX — no API keys needed."
+    "© 2026 Free AI Video Studio | CEO: Muhammad Mudassir Yaseen | All rights reserved."
 )
 st.markdown(
     '<p class="footer">© 2026 Free AI Video Studio &nbsp;|&nbsp; CEO: Muhammad Mudassir Yaseen</p>',
