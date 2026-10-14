@@ -137,6 +137,18 @@ def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
     # when we actually have an image (I2V on 5B).
     if image_path:
         kwargs["image_input"] = image_path
+    # Self-healing: Spaces change their API without notice. If the Space
+    # rejects a parameter name, drop it and retry (max 4 drops).
+    import re
+    for _ in range(5):
+        try:
+            return client.submit(**kwargs)
+        except Exception as e:
+            m = re.search(r"Parameter (\w+) is not a valid key-word argument",
+                          str(e))
+            if not m or m.group(1) not in kwargs:
+                raise
+            kwargs.pop(m.group(1))
     return client.submit(**kwargs)
 
 
