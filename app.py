@@ -802,6 +802,36 @@ def show_result(key_prefix: str, label: str) -> None:
         return
     done_label = st.session_state.get(f"{key_prefix}_label_done", label)
     st.success(f"✅ {done_label} ready!")
+
+    # Monetization: mandatory ad after every video
+    if f"{key_prefix}_ad_done" not in st.session_state:
+        st.session_state[f"{key_prefix}_ad_done"] = False
+    if not st.session_state[f"{key_prefix}_ad_done"]:
+        st.warning("📢 Please watch this ad to unlock your video download")
+        import streamlit.components.v1 as _comp
+        _ad = """<div style="background:#1f2937;border-radius:12px;padding:20px;text-align:center;color:#9ca3af;">📢 Advertisement</div>"""
+        try:
+            _comp.html(_ad, height=120)
+        except:
+            pass
+        if st.button("✅ I've watched the ad — Unlock Download", key=f"{key_prefix}_ad_btn", type="primary"):
+            st.session_state[f"{key_prefix}_ad_done"] = True
+            # Increment video counter
+            cnt = st.session_state.get("video_count", 0) + 1
+            st.session_state["video_count"] = cnt
+            st.rerun()
+        st.stop()
+
+    # Every 3rd video: mandatory survey
+    cnt = st.session_state.get("video_count", 0)
+    if cnt > 0 and cnt % 3 == 0 and not st.session_state.get(f"{key_prefix}_survey_done", False):
+        st.warning(f"📋 You've created {cnt} videos! Please complete 1 quick survey to continue")
+        st.link_button("📋 Complete Survey", "https://singingfiles.com/show.php?l=0&u=2558676&id=74764")
+        if st.button("✅ Survey completed — Continue", key=f"{key_prefix}_survey_btn", type="primary"):
+            st.session_state[f"{key_prefix}_survey_done"] = True
+            st.rerun()
+        st.stop()
+
     st.video(data, format="video/mp4")
     st.download_button(
         "⬇️ Download MP4",
