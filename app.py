@@ -173,12 +173,36 @@ STORY_CHAIN = [SPACE_WAN, SPACE_COG5]
 
 _client_cache: dict = {}
 
+# A hanging Space handshake must NEVER block the Streamlit session:
+# Streamlit Cloud drops the websocket after ~60-90s of silence and the
+# run dies with no error and no fallback. Fail fast instead.
+CONNECT_TIMEOUT = 20  # seconds for connect; generous read for slow queues
+
+
+def _client_timeout():
+    try:
+        import httpx
+        return httpx.Timeout(connect=CONNECT_TIMEOUT, read=300.0,
+                             write=60.0, pool=CONNECT_TIMEOUT)
+    except Exception:
+        return CONNECT_TIMEOUT
+
 
 def get_client(space_id: str) -> Client:
     """Cache one gradio_client per Space (connect handshake is slow)."""
     if space_id not in _client_cache:
-        _client_cache[space_id] = Client(space_id)
+        _client_cache[space_id] = Client(
+            space_id, httpx_kwargs={"timeout": _client_timeout()})
     return _client_cache[space_id]
+
+
+def _is_connect_error(exc: Exception) -> bool:
+    low = str(exc).lower()
+    return any(k in low for k in (
+        "connecterror", "connect error", "connection refused",
+        "name or service not known", "temporary failure in name resolution",
+        "invalidurl", "invalid url", "ssl", "certificate",
+        "timed out", "timeout", "read timed out"))
 
 
 # ----------------------------------------------------------------------------
@@ -259,6 +283,7 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                 job = submit_fn(client, kind, **params)
                 start = time.time()
                 last_qpos = None
+                last_beat = 0.0
                 while not job.done():
                     if time.time() - start > JOB_TIMEOUT:
                         try:
@@ -281,6 +306,18 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                                 state="running")
                     except Exception:
                         pass
+                    # Heartbeat: keep messages flowing so Streamlit Cloud
+                    # never drops the session during a long queue wait.
+                    now = time.time()
+                    if now - last_beat >= 25:
+                        last_beat = now
+                        mins = int((now - start) // 60)
+                        secs = int((now - start) % 60)
+                        qtxt = f" (queue #{last_qpos})" if last_qpos else ""
+                        status.update(
+                            label=f"🎥 {label} — still working{qtxt}… "
+                                  f"{mins}m {secs}s elapsed",
+                            state="running")
                     time.sleep(10)
                 video_bytes = _result_to_bytes(job.result())
                 status.update(label=f"✅ Video ready — via {label}",
@@ -289,6 +326,13 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
             except Exception as exc:  # noqa: BLE001 — fallback below
                 last_exc = exc
                 low = str(exc).lower()
+                # Connect-level failure (hanging Space handshake): retrying the
+                # SAME space just burns another timeout — drop its cached
+                # client and move straight to the next Space.
+                if _is_connect_error(exc):
+                    _client_cache.pop(space_id, None)
+                    status.write(f"⚠️ {label} unreachable — trying the next Space…")
+                    break  # → next Space
                 # Stale API info in cached client (Space updated mid-session):
                 # drop the client so the next attempt re-fetches the API.
                 if "not a valid key-word argument" in low:
