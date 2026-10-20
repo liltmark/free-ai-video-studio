@@ -208,7 +208,8 @@ class _ChainedJob:
                     frame = _normalize_frame(frame)
                     kwargs = dict(self._base)
                     kwargs["input_image"] = handle_file(frame)
-            final = stitch_clips(clips) if len(clips) > 1 else clips[0]            path = tempfile.NamedTemporaryFile(
+            final = stitch_clips(clips) if len(clips) > 1 else clips[0]
+            path = tempfile.NamedTemporaryFile(
                 suffix=".mp4", delete=False).name
             with open(path, "wb") as f:
                 f.write(final)
