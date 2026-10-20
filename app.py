@@ -748,7 +748,7 @@ def _pixabay_search(query: str, api_key: str, per_page: int = 12):
 
 
 RESOLUTIONS = {
-    "Portrait 720×1280 (Shorts)": (1280, 720),   # (width, height)
+    "Portrait 720×1280 (Shorts)": (720, 1280),   # (width, height)
     "Square 512×512": (512, 512),
     "Landscape 1280×720": (1280, 720),
 }
