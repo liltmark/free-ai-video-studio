@@ -149,6 +149,26 @@ def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
     return client.submit(**kwargs)
 
 
+def _normalize_frame(png_path: str) -> str:
+    """Tame exposure/color blowouts in a chained segment's last frame.
+
+    Each Wan segment amplifies the previous frame's extremes; by segment 3
+    highlights can posterize into red/cyan blocks. A gentle autocontrast +
+    saturation trim on the hand-off frame keeps the chain stable.
+    Returns the (possibly rewritten) frame path; never raises.
+    """
+    try:
+        from PIL import Image, ImageOps, ImageEnhance
+        im = Image.open(png_path).convert("RGB")
+        im = ImageOps.autocontrast(im, cutoff=1)
+        im = ImageEnhance.Color(im).enhance(0.92)
+        im = ImageEnhance.Brightness(im).enhance(0.98)
+        im.save(png_path)
+    except Exception:
+        pass
+    return png_path
+
+
 class _ChainedJob:
     """Presents several sequential Wan jobs as ONE job.
 
@@ -185,10 +205,10 @@ class _ChainedJob:
                 clips.append(data)
                 if i < self._segments - 1:
                     frame = extract_last_frame(data)
+                    frame = _normalize_frame(frame)
                     kwargs = dict(self._base)
                     kwargs["input_image"] = handle_file(frame)
-            final = stitch_clips(clips) if len(clips) > 1 else clips[0]
-            path = tempfile.NamedTemporaryFile(
+            final = stitch_clips(clips) if len(clips) > 1 else clips[0]            path = tempfile.NamedTemporaryFile(
                 suffix=".mp4", delete=False).name
             with open(path, "wb") as f:
                 f.write(final)
