@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import random
 import tempfile
+import threading
 import time
 import traceback
 import urllib.request
@@ -91,7 +92,7 @@ SPACE_WAN = "Upsampler/wan-2-2-14b-image-to-video"  # Wan 2.2 14B I2V (verified 
 SPACE_FLUX = "black-forest-labs/FLUX.1-schnell"   # photorealistic stills (verified 2026-10-20)
 SPACE_SMART = "smart/cinema-engine"               # virtual: text -> FLUX still -> Wan video
 
-JOB_TIMEOUT = 480  # seconds (8 min) — public queues can be slow at peak times
+JOB_TIMEOUT = 720  # seconds (12 min) — chained clips + public queues can be slow
 
 
 def _ltx_submit(client: Client, kind: str, prompt: str, negative: str,
@@ -148,6 +149,77 @@ def _cog_submit(client: Client, kind: str, prompt: str, negative: str,
     return client.submit(**kwargs)
 
 
+class _ChainedJob:
+    """Presents several sequential Wan jobs as ONE job.
+
+    Why: the free GPU pool refuses any single task over ~150 GPU-seconds,
+    so a 5-second Wan clip (225s) is rejected outright — while 2-second
+    clips (~90s) pass. For videos longer than 2s we chain: clip 1 from the
+    image, clip 2 from clip 1's last frame, and so on, then stitch.
+    Duck-types the gradio job interface used by generate_with_fallback.
+    """
+
+    def __init__(self, client, base_kwargs: dict, segments: int):
+        self._client = client
+        self._base = base_kwargs
+        self._segments = segments
+        self._done_flag = False
+        self._result_path = None
+        self._error: Exception | None = None
+        self._cancelled = False
+        self._current = None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        try:
+            from gradio_client.utils import handle_file
+            clips = []
+            kwargs = dict(self._base)
+            for i in range(self._segments):
+                if self._cancelled:
+                    raise RuntimeError("Generation cancelled")
+                job = self._client.submit(**kwargs, api_name="/generate_video")
+                self._current = job
+                data = _result_to_bytes(job.result())
+                clips.append(data)
+                if i < self._segments - 1:
+                    frame = extract_last_frame(data)
+                    kwargs = dict(self._base)
+                    kwargs["input_image"] = handle_file(frame)
+            final = stitch_clips(clips) if len(clips) > 1 else clips[0]
+            path = tempfile.NamedTemporaryFile(
+                suffix=".mp4", delete=False).name
+            with open(path, "wb") as f:
+                f.write(final)
+            self._result_path = path
+        except Exception as exc:  # surfaced via result()
+            self._error = exc
+        finally:
+            self._done_flag = True
+
+    def done(self) -> bool:
+        return self._done_flag
+
+    def status(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(code=Status.PROCESSING, queue_position=None)
+
+    def result(self, timeout=None):
+        self._thread.join(timeout=timeout)
+        if self._error is not None:
+            raise self._error
+        return self._result_path
+
+    def cancel(self):
+        self._cancelled = True
+        try:
+            if self._current is not None:
+                self._current.cancel()
+        except Exception:
+            pass
+
+
 def _wan_submit(client: Client, kind: str, prompt: str, negative: str,
                 image_path, width: int, height: int, duration: float,
                 seed: int, guidance: float, drop_params=frozenset()):
@@ -171,16 +243,21 @@ def _wan_submit(client: Client, kind: str, prompt: str, negative: str,
             image_path = _up.name
     except Exception:
         pass
-    # steps max 12, duration as requested
-    return client.submit(
+    # steps max 12. Single free-GPU tasks are capped (~150 GPU-seconds), so
+    # anything over 2s is chained from 2s segments (see _ChainedJob).
+    dur = max(1, min(5, int(round(duration))))
+    base_kwargs = dict(
         input_image=handle_file(image_path),
         prompt=prompt,
         steps=10,
         negative_prompt=negative or "blurry, low quality",
-        duration_seconds=max(1, min(5, int(round(duration)))),
         guidance_scale=float(guidance),
-        api_name="/generate_video",
     )
+    if dur <= 2:
+        return client.submit(
+            duration_seconds=dur, api_name="/generate_video", **base_kwargs)
+    segments = (dur + 1) // 2  # 3s -> 2 clips, 4s -> 2 clips, 5s -> 3 clips
+    return _ChainedJob(client, dict(base_kwargs, duration_seconds=2), segments)
 
 
 # ----------------------------------------------------------------------------
