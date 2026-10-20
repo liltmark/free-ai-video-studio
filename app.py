@@ -97,13 +97,14 @@ def _ltx_submit(client: Client, kind: str, prompt: str, negative: str,
                 seed: int, guidance: float, drop_params=frozenset()):
     """Submit to LTX-Video Space. kind: 't2v' or 'i2v'."""
     rnd = (seed == -1)
-    # Free-tier clamp: ZeroGPU rejects GPU estimates over its free max.
-    # Keep the request small: <=512px on the long edge, <=2s duration.
-    # (User picks bigger in the UI; we shrink it so it actually runs free.)
-    scale = min(1.0, 512.0 / max(width, height))
+    # Free-tier balance (v3.1): honor the user's pick up to 5 seconds and
+    # 640px on the long edge. Bigger requests cost more free GPU quota, so
+    # when the free pool is empty the engine declines and the app explains
+    # it — but a valid request is never silently shrunk to 2s/512px again.
+    scale = min(1.0, 640.0 / max(width, height))
     w = int(width * scale) // 8 * 8
     h = int(height * scale) // 8 * 8
-    dur = min(float(duration), 2.0)
+    dur = min(float(duration), 5.0)
     frames = max(9, min(257, int(dur * 24)))
     api = "/text_to_video" if kind == "t2v" else "/image_to_video"
     mode = "text-to-video" if kind == "t2v" else "image-to-video"
@@ -152,6 +153,22 @@ def _wan_submit(client: Client, kind: str, prompt: str, negative: str,
     from gradio_client.utils import handle_file
     if kind != "i2v" or not image_path:
         raise ValueError("Wan Space only supports image-to-video")
+    # The engine renders near the input image's size: feed it at least
+    # 720px on the long edge so the video comes out as large as possible.
+    try:
+        from PIL import Image as _PILImage
+        _im = _PILImage.open(image_path)
+        _w, _h = _im.size
+        if max(_w, _h) < 720:
+            _s = 720.0 / max(_w, _h)
+            _im = _im.convert("RGB").resize(
+                (max(2, int(_w * _s) // 2 * 2), max(2, int(_h * _s) // 2 * 2)),
+                _PILImage.LANCZOS)
+            _up = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            _im.save(_up.name)
+            image_path = _up.name
+    except Exception:
+        pass
     # steps max 12, duration as requested
     return client.submit(
         input_image=handle_file(image_path),
@@ -198,11 +215,41 @@ def _client_timeout():
         return CONNECT_TIMEOUT
 
 
+def _hf_token():
+    """Optional Hugging Face token (Streamlit Secrets or env).
+
+    With a token, the free GPU quota is the account's own dedicated pool
+    instead of the tiny shared anonymous pool — that is what makes the
+    free tier (3 videos/day) reliable. Without one, the app still works
+    anonymously, just with a smaller shared quota.
+    """
+    import os
+    tok = os.environ.get("HF_TOKEN")
+    if tok:
+        return tok
+    try:
+        import streamlit as _st
+        t = _st.secrets.get("HF_TOKEN")
+        return t if t else None
+    except Exception:
+        return None
+
+
 def get_client(space_id: str) -> Client:
     """Cache one gradio_client per Space (connect handshake is slow)."""
     if space_id not in _client_cache:
-        _client_cache[space_id] = Client(
-            space_id, httpx_kwargs={"timeout": _client_timeout()})
+        tok = _hf_token()
+        client = None
+        if tok:
+            try:
+                client = Client(space_id, token=tok,
+                                httpx_kwargs={"timeout": _client_timeout()})
+            except TypeError:
+                client = None
+        if client is None:
+            client = Client(
+                space_id, httpx_kwargs={"timeout": _client_timeout()})
+        _client_cache[space_id] = client
     return _client_cache[space_id]
 
 
@@ -264,7 +311,13 @@ def _clean_brand(text: str) -> str:
 
 
 def _friendly_space_error(exc: Exception) -> str:
+    if isinstance(exc, DailyLimitError):
+        return str(exc)
     low = str(exc).lower()
+    if "zerogpu" in low or "exceeded your" in low or "gpu quota" in low:
+        return ("🎁 **The free engines are resting.** The shared free GPU "
+                "quota refills on its own — please try again in a little "
+                "while. Your free tier gives you 3 videos every day.")
     if "queue_full" in low or "queue is full" in low:
         return ("⏳ **All engines are busy.** Please wait a few minutes and try again.")
     if "timeout" in low or "timed out" in low:
@@ -275,8 +328,43 @@ def _friendly_space_error(exc: Exception) -> str:
     return f"⚠️ **Generation failed:** {short}"
 
 
+# ----------------------------------------------------------------------------
+# Free tier: 3 videos per day (per visitor session)
+# ----------------------------------------------------------------------------
+
+FREE_DAILY_LIMIT = 3
+
+
+class DailyLimitError(Exception):
+    """Raised when a visitor has used up today's free videos."""
+
+
+def _check_daily_limit() -> None:
+    import datetime
+    today = datetime.date.today().isoformat()
+    if st.session_state.get("gen_day") != today:
+        st.session_state["gen_day"] = today
+        st.session_state["gen_count"] = 0
+    used = int(st.session_state.get("gen_count", 0))
+    if used >= FREE_DAILY_LIMIT:
+        raise DailyLimitError(
+            f"🎁 **You've used your {FREE_DAILY_LIMIT} free videos for "
+            "today.** Your free tier refills tomorrow — come back for 3 "
+            "more free videos, on us!")
+
+
+def _bump_daily_count() -> None:
+    import datetime
+    today = datetime.date.today().isoformat()
+    if st.session_state.get("gen_day") != today:
+        st.session_state["gen_day"] = today
+        st.session_state["gen_count"] = 0
+    st.session_state["gen_count"] = int(st.session_state.get("gen_count", 0)) + 1
+
+
 def generate_with_fallback(kind: str, status, preferred: str | None = None,
-                           pin_space: str | None = None, **params):
+                           pin_space: str | None = None,
+                           from_story: bool = False, **params):
     """Generate via public Spaces with automatic fallback.
 
     Tries the preferred Space first, then the rest of the chain.
@@ -285,6 +373,8 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
     is shown in the `status` (st.status) container.
     Returns (video_bytes, space_label, space_id). Raises last error if all fail.
     """
+    if not from_story:
+        _check_daily_limit()
     if pin_space:
         chain = [pin_space]
     else:
@@ -352,6 +442,8 @@ def generate_with_fallback(kind: str, status, preferred: str | None = None,
                 video_bytes = _result_to_bytes(job.result())
                 status.update(label=f"✅ Video ready — via {label}",
                               state="complete")
+                if not from_story:
+                    _bump_daily_count()
                 return video_bytes, label, space_id
             except Exception as exc:  # noqa: BLE001 — fallback below
                 last_exc = exc
@@ -428,6 +520,41 @@ def stitch_clips(clips: list) -> bytes:
          "-i", listfile, "-c", "copy", out],
         check=True, capture_output=True, timeout=300)
     with open(out, "rb") as f:
+        return f.read()
+
+
+def hd_upscale_bytes(video_bytes: bytes) -> bytes:
+    """HD Finish: upscale a generated clip to full HD — 1080x1920 for
+    portrait, 1920x1080 for landscape — lanczos scaling + gentle sharpening.
+    Returns the original bytes untouched if anything goes wrong."""
+    import imageio_ffmpeg
+    import subprocess
+    import os
+    tmpdir = tempfile.mkdtemp()
+    src = os.path.join(tmpdir, "in.mp4")
+    dst = os.path.join(tmpdir, "hd.mp4")
+    with open(src, "wb") as f:
+        f.write(video_bytes)
+    # Probe the frame size from the first frame.
+    import imageio.v3 as iio
+    frame = next(iio.imiter(src))
+    h, w = int(frame.shape[0]), int(frame.shape[1])
+    if h >= w:
+        tw, th = 1080, 1920
+    else:
+        tw, th = 1920, 1080
+    if w >= tw and h >= th:
+        return video_bytes  # already HD or better
+    vf = (f"scale={tw}:{th}:force_original_aspect_ratio=increase:flags=lanczos,"
+          f"crop={tw}:{th},unsharp=5:5:0.7:5:5:0.0,setsar=1")
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    subprocess.run(
+        [ffmpeg, "-y", "-i", src, "-vf", vf,
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
+         "-preset", "medium", "-c:a", "aac", "-b:a", "128k",
+         "-movflags", "+faststart", dst],
+        check=True, capture_output=True, timeout=300)
+    with open(dst, "rb") as f:
         return f.read()
 
 
@@ -526,6 +653,7 @@ def generate_story(status, preferred: str | None, clip_prompts: list,
     feels like one continuous video. I2V clips pin to the first successful
     I2V Space (Wan 2.2 14B primary, CogVideoX-5B fallback).
     Returns (stitched_bytes, space_label, num_clips)."""
+    _check_daily_limit()
     clips: list = []
     label = None
     total = len(clip_prompts)
@@ -537,17 +665,19 @@ def generate_story(status, preferred: str | None, clip_prompts: list,
             p["image_path"] = None
             status.write(f"🎬 **Clip 1/{total}** — starting…")
             vb, label, _sid = generate_with_fallback(
-                "t2v", status, preferred, **p)
+                "t2v", status, preferred, from_story=True, **p)
         else:
             # Previous clip's last frame = next clip's first frame (the link!)
             p["image_path"] = extract_last_frame(clips[-1])
             status.write(f"🎬 **Clip {i+1}/{total}** — linking to previous clip…")
             vb, label, i2v_space = generate_with_fallback(
-                "i2v", status, None, pin_space=i2v_space, **p)
+                "i2v", status, None, pin_space=i2v_space,
+                from_story=True, **p)
         clips.append(vb)
     status.update(label="🔗 Stitching clips into one video…",
                   state="running")
     final = stitch_clips(clips)
+    _bump_daily_count()
     status.update(label=f"✅ {total} clips — full video ready (via {label})",
                   state="complete")
     return final, label, total
@@ -826,9 +956,22 @@ with st.sidebar:
         width, height = RESOLUTIONS[res_label]
         duration = st.slider(
             "Duration (seconds)",
-            min_value=1, max_value=8, value=3, step=1,
-            help="Longer videos can mean longer queue/wait times.",
+            min_value=1, max_value=5, value=5, step=1,
+            help="Free videos can be up to 5 seconds long.",
         )
+        hd_finish = st.checkbox(
+            "📺 HD Finish (1080p)",
+            value=True,
+            help="Every video is finished in full HD (1080p) before download.",
+        )
+        st.session_state["hd_finish"] = hd_finish
+        import datetime as _dt
+        if st.session_state.get("gen_day") != _dt.date.today().isoformat():
+            st.session_state["gen_day"] = _dt.date.today().isoformat()
+            st.session_state["gen_count"] = 0
+        _left = FREE_DAILY_LIMIT - int(st.session_state.get("gen_count", 0))
+        st.info(f"🎁 **Free tier:** {_left} of {FREE_DAILY_LIMIT} free "
+                "videos left today (up to 5s each, HD included).")
         guidance = st.slider(
             "Guidance scale (prompt adherence)",
             min_value=1.0, max_value=10.0, value=5.0, step=0.5,
@@ -843,6 +986,8 @@ with st.sidebar:
         with st.expander("💡 Free-Tier Reality Check"):
             st.write(
                 "• **Completely free — no tokens or API keys required.**\n"
+                f"• **Free tier: {FREE_DAILY_LIMIT} videos per day**, up to "
+                "**5 seconds** each, finished in **full HD (1080p)**.\n"
                 "• Videos are generated on our **high-performance AI servers**.\n"
                 "• **Queues:** free servers get busy — at peak times it can take 10–30 min. "
                 "The app automatically tries the next engine.\n"
@@ -927,6 +1072,22 @@ def show_result(key_prefix: str, label: str) -> None:
             st.session_state[f"{key_prefix}_survey_done"] = True
             st.rerun()
         st.stop()
+
+    # HD Finish (default ON): deliver every video in full HD.
+    if st.session_state.get("hd_finish", True):
+        import hashlib as _hl
+        _sig = _hl.md5(data).hexdigest()
+        _cached = st.session_state.get(f"{key_prefix}_hd_video")
+        if not (isinstance(_cached, tuple) and _cached[0] == _sig):
+            try:
+                _hd = hd_upscale_bytes(data)
+            except Exception:
+                _hd = data
+            st.session_state[f"{key_prefix}_hd_video"] = (_sig, _hd)
+            _cached = (_sig, _hd)
+        data = _cached[1]
+        if not name.endswith("_HD.mp4"):
+            name = name.replace(".mp4", "_HD.mp4")
 
     st.video(data, format="video/mp4")
     st.download_button(
