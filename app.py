@@ -88,6 +88,8 @@ SPACE_LTX = "Lightricks/ltx-video-distilled"      # official LTX-Video demo
 SPACE_COG5 = "zai-org/CogVideoX-5B-Space"         # official CogVideoX 5B demo
 SPACE_COG2 = "zai-org/CogVideoX-2B-Space"         # official CogVideoX 2B demo
 SPACE_WAN = "Upsampler/wan-2-2-14b-image-to-video"  # Wan 2.2 14B I2V (verified 2026-10-13)
+SPACE_FLUX = "black-forest-labs/FLUX.1-schnell"   # photorealistic stills (verified 2026-10-20)
+SPACE_SMART = "smart/cinema-engine"               # virtual: text -> FLUX still -> Wan video
 
 JOB_TIMEOUT = 480  # seconds (8 min) — public queues can be slow at peak times
 
@@ -181,15 +183,69 @@ def _wan_submit(client: Client, kind: str, prompt: str, negative: str,
     )
 
 
+# ----------------------------------------------------------------------------
+# Smart Cinema route: the studio UNDERSTANDS plain words.
+# A visitor types anything in their own words; the studio first paints a
+# photorealistic cinematic still of exactly that scene, then films it with
+# the Wan engine — so text prompts come out as real CGI, not flat cartoons.
+# ----------------------------------------------------------------------------
+
+_CGI_STYLE = ("photorealistic CGI, cinematic Hollywood VFX quality, "
+              "ultra-detailed realistic textures, dramatic cinematic lighting")
+
+
+def _enhance_prompt(raw: str):
+    """Wrap the visitor's own words in cinematic direction.
+    Returns (image_prompt, video_prompt). Their words always lead."""
+    raw = " ".join(str(raw).split())
+    image_prompt = f"{_CGI_STYLE}: {raw}"
+    video_prompt = (f"{_CGI_STYLE}, smooth natural motion, the scene comes "
+                    f"alive with realistic movement: {raw}")
+    return image_prompt, video_prompt
+
+
+def _smart_submit(client: Client, kind: str, prompt: str, negative: str,
+                  image_path, width: int, height: int, duration: float,
+                  seed: int, guidance: float, drop_params=frozenset()):
+    """Text-to-video the smart way: FLUX still -> Wan I2V job.
+    `client` here is the FLUX image client (see get_client mapping)."""
+    if kind != "t2v":
+        raise ValueError("Cinema Engine is for text-to-video")
+    img_prompt, vid_prompt = _enhance_prompt(prompt)
+    res = client.predict(
+        prompt=img_prompt,
+        seed=0,
+        randomize_seed=True,
+        width=int(width),
+        height=int(height),
+        num_inference_steps=4,
+        api_name="/infer",
+    )
+    img = res[0] if isinstance(res, (tuple, list)) else res
+    if isinstance(img, dict):
+        img = img.get("path") or img.get("image") or img.get("url")
+    if not img:
+        raise RuntimeError("Cinema Engine could not paint the first frame")
+    if isinstance(img, str) and img.startswith("http"):
+        dst = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+        with urllib.request.urlopen(img, timeout=120) as resp, \
+                open(dst, "wb") as f:
+            f.write(resp.read())
+        img = dst
+    wan_client = get_client(SPACE_WAN)
+    return _wan_submit(wan_client, "i2v", vid_prompt, negative, img,
+                       width, height, duration, seed, guidance)
+
+
 # Space registry: label + submit adapter. Order = fallback priority.
 SPACE_ADAPTERS = {
+    SPACE_SMART: {"label": "🎨 Cinema Engine", "fn": _smart_submit},
     SPACE_LTX:  {"label": "⚡ Turbo Engine", "fn": _ltx_submit},
     SPACE_COG5: {"label": "🎬 Pro Engine",   "fn": _cog_submit},
     SPACE_COG2: {"label": "🚀 Fast Engine",  "fn": _cog_submit},
     SPACE_WAN:  {"label": "🎨 HD Engine",    "fn": _wan_submit},
 }
-
-T2V_CHAIN = [SPACE_LTX]  # CogVideoX removed: fixed 6s output always exceeds free GPU limit
+T2V_CHAIN = [SPACE_SMART, SPACE_LTX]  # smart CGI first; LTX is the backup
 # I2V reality (verified 2026-10-13): LTX /image_to_video raises a server-side
 # exception; CogVideoX-2B /generate has NO image param at all (T2V only).
 # Working I2V: Wan 2.2 14B (verified live) + CogVideoX-5B (quota-unstable).
@@ -237,6 +293,8 @@ def _hf_token():
 
 def get_client(space_id: str) -> Client:
     """Cache one gradio_client per Space (connect handshake is slow)."""
+    if space_id == SPACE_SMART:
+        space_id = SPACE_FLUX  # the Cinema Engine's first step is the painter
     if space_id not in _client_cache:
         tok = _hf_token()
         client = None
@@ -307,6 +365,8 @@ def _clean_brand(text: str) -> str:
     text = _re.sub(r"Lightricks/[\\w-]+", "the engine", text)
     text = _re.sub(r"zai-org/[\\w-]+", "the engine", text)
     text = _re.sub(r"Upsampler/[\\w-]+", "the engine", text)
+    text = _re.sub(r"black-forest-labs/[\\w-]+", "the engine", text)
+    text = _re.sub(r"smart/[\\w-]+", "the engine", text)
     return text
 
 
@@ -1102,7 +1162,9 @@ def show_result(key_prefix: str, label: str) -> None:
 # ---------------- Page: Text to Video ----------------
 if page == PAGE_T2V:
     st.subheader("Describe it → get an MP4")
-    st.caption("⚡ Auto-fallback is ON: if one engine is busy, the app automatically tries the next one.")
+    st.caption("🧠 **Smart studio:** just write what you want in your own words — "
+               "the studio understands it, paints it as cinematic CGI and films it. "
+               "Auto-fallback is ON: if one engine is busy, the next one takes over.")
     prompt = st.text_area(
         "Prompt",
         height=120,
